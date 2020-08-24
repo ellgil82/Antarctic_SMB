@@ -31,7 +31,7 @@ East_Antarctica = iris.Constraint(longitude=lambda v: -40 <= v <= 180,# & longit
 West_Antarctica = iris.Constraint(longitude=lambda v: -179 <= v <= -40,
                                   latitude=lambda v: -90 <= v <= -72)
 # Choose region of interest
-region = 'AIS'
+region = West_Antarctica
 
 # Load orography and coastlines
 orog_full = iris.load_cube(filepath + 'orog.nc')
@@ -42,23 +42,27 @@ if region == 'AIS':
     pr = iris.load_cube(filepath + 'pr_ccam_eraint_ant-44i_50km_day.historical.nc')
     evap = iris.load_cube(filepath + 'evspsbl_ccam_eraint_ant-44i_50km_day.historical.nc')
     mrro = iris.load_cube(filepath + 'mrro_ccam_eraint_ant-44i_50km_day.historical.nc')
-    #mrros = iris.load_cube(filepath + 'mrros_ccam_eraint_ant-44i_50km_day.historical.nc', region)
+    mrros = iris.load_cube(filepath + 'mrros_ccam_eraint_ant-44i_50km_day.historical.nc')
+    snm = iris.load_cube(filepath + 'snm_ccam_eraint_ant-44i_50km_day.historical.nc')
     #Load orography and coastlines
     orog = iris.load_cube(filepath + 'orog.nc')
     lsm = iris.load_cube(filepath + 'sftlf.nc')
+    lsm = lsm / 100
     grid_area = iris.load_cube(filepath + 'grid_area.nc')
 else:
     pr = iris.load_cube(filepath + 'pr_ccam_eraint_ant-44i_50km_day.historical.nc', region)
     evap = iris.load_cube(filepath + 'evspsbl_ccam_eraint_ant-44i_50km_day.historical.nc', region)
     mrro = iris.load_cube(filepath + 'mrro_ccam_eraint_ant-44i_50km_day.historical.nc', region)
-    #mrros = iris.load_cube(filepath + 'mrros_ccam_eraint_ant-44i_50km_day.historical.nc', region)
+    mrros = iris.load_cube(filepath + 'mrros_ccam_eraint_ant-44i_50km_day.historical.nc', region)
+    snm = iris.load_cube(filepath + 'snm_ccam_eraint_ant-44i_50km_day.historical.nc', region)
     #Load orography and coastlines
     orog = iris.load_cube(filepath + 'orog.nc', region)
     lsm = iris.load_cube(filepath + 'sftlf.nc', region)
+    lsm = lsm / 100
     grid_area = iris.load_cube(filepath + 'grid_area.nc', region)
 
 # Convert units
-for v in [pr, evap, mrro, mrro]:
+for v in [pr, evap, mrro, mrros, snm]:
     v.convert_units('kg/m2/d')
     iris.coord_categorisation.add_year(v, 'time', name='year')
 
@@ -66,18 +70,28 @@ pr_annual_tot = pr.aggregated_by(['year'],iris.analysis.SUM)
 evap_annual_tot = evap.aggregated_by(['year'], iris.analysis.SUM)
 mrro_annual_tot = mrro.aggregated_by(['year'], iris.analysis.SUM)
 mrros_annual_tot = mrros.aggregated_by(['year'], iris.analysis.SUM)
+snm_annual_tot = snm.aggregated_by(['year'], iris.analysis.SUM)
 
 grid_area_masked = grid_area * lsm
-pr_an_Gt = (pr_annual_tot.data.mean(axis= 0)*grid_area_masked.data)/1e14
-tot_pr = pr_an_Gt.sum()
-evap_an_tot = (evap_annual_tot.data.mean(axis= 0)*grid_area_masked.data)/1e14
+
+pr_an_tot = (pr_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
+evap_an_tot = (evap_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
+mrro_an_tot = (mrro_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
+mrros_an_tot = (mrros_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
+snm_an_tot = (snm_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
 
 ## Calculate SMB
 # SMB = precip - evap - sublim - runoff
-SMB = pr - evap - mrro # no sublimation file
-SMB_annual_tot = pr_annual_tot - evap_annual_tot - mrro_annual_tot
-SMB_an_Gt = (SMB_annual_tot.data.mean(axis = 0) * grid_area_masked.data)/10e12
+SMB = pr - evap - mrros # no sublimation file
+SMB_annual_tot = pr_annual_tot - evap_annual_tot# - mrro_annual_tot
+SMB_an_tot = (SMB_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
 
+print('area ' + str(grid_area_masked.data.sum()/1e12) + ' x 10^6 km2') # in 10^6 km2
+print('pr ' + str(pr_an_tot) + ' Gt yr-1')
+print('evap ' + str(evap_an_tot) + ' Gt yr-1')
+print('snm ' + str(snm_an_tot) + ' Gt yr-1')
+print('mrro ' + str(mrro_an_tot) + ' Gt yr-1')
+print('SMB  ' + str(SMB_an_tot) + ' Gt yr-1')
 
 # put bounds on a simple point coordinate.
 lsm.coord('latitude').guess_bounds()
@@ -92,12 +106,25 @@ def plot_SMB(SMBvar):
     ax.set_extent([-180, 180, -90, -60], ccrs.PlateCarree())
     mean_data = SMBvar.collapsed('time', iris.analysis.MEAN).data
     #mean_data[lsm.data==0] = 0
-    squished_cmap = shiftedColorMap(cmap=matplotlib.cm.coolwarm_r, min_val=-200., max_val=300., name='squished_cmap', var=mean_data,
+    squished_cmap = shiftedColorMap(cmap=matplotlib.cm.coolwarm, min_val=-100., max_val=1000., name='squished_cmap', var=mean_data,
                                     start=0.3, stop=0.7)
     f = ax.pcolormesh(gridlons, gridlats, np.ma.masked_where(lsm.data == 0, mean_data), transform = ccrs.PlateCarree(),
-                    cmap=squished_cmap, vmin = -170, vmax = 250)
+                    cmap=squished_cmap, vmin = -100, vmax = 1000)
     ax.contour(lsm_full.coord('longitude').points, lsm_full.coord('latitude').points, lsm_full.data>0, levels = [0], lw = 2, color = 'k', transform = ccrs.PlateCarree())
-    plt.colorbar(f)
+    gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True,  linewidth=2, color='gray', alpha=0.5, linestyle='--')
+    gl.xlabels_top = False
+    gl.ylabels_left = False
+    gl.xlines = False
+    #gl.xlocator = mticker.FixedLocator([-180, -45, 0, 45, 180])
+    gl.xformatter = LONGITUDE_FORMATTER
+    gl.yformatter = LATITUDE_FORMATTER
+    gl.xlabel_style = {'size': 15, 'color': 'gray'}
+    gl.xlabel_style = {'color': 'red', 'weight': 'bold'}
+    cb = plt.colorbar(f, orientation='vertical')
+    cb.solids.set_edgecolor("face")
+    cb.outline.set_edgecolor('dimgrey')
+    cb.ax.tick_params(which='both', axis='both', labelsize=24, labelcolor='dimgrey', pad=10, size=0, tick1On=False, tick2On=False)
+    cb.outline.set_linewidth(2)
     if region == 'AIS':
         plt.savefig(filepath + 'ERA-Interim_historical_mean_SMB_AIS.png')
     elif region == Antarctic_peninsula:
@@ -109,95 +136,6 @@ def plot_SMB(SMBvar):
     plt.show()
 
 plot_SMB(SMB_annual_tot)
-
-def reproject(latitude, longitude):
-    """Returns the x & y coordinates in meters using a sinusoidal projection"""
-    from math import pi, cos, radians
-    earth_radius = 6371009 # in meters
-    lat_dist = pi * earth_radius / 180.0
-    y = [lat * lat_dist for lat in latitude]
-    x = [long * lat_dist * cos(radians(lat))
-                for lat, long in zip(latitude, longitude)]
-    return x, y
-
-def area_of_polygon(x, y):
-    """Calculates the area of an arbitrary polygon given its vertices"""
-    area = 0.0
-    for i in range(-1, len(x)-1):
-        area += x[i] * (y[i+1] - y[i-1])
-    return abs(area) / 2.0
-
-def polygon_area(lats, lons, algorithm = 0, radius = 6378137):
-    """
-    Computes area of spherical polygon, assuming spherical Earth.
-    Returns result in ratio of the sphere's area if the radius is specified.
-    Otherwise, in the units of provided radius.
-    lats and lons are in degrees.
-    """
-    from numpy import arctan2, cos, sin, sqrt, pi, power, append, diff, deg2rad
-    lats = np.deg2rad(lats)
-    lons = np.deg2rad(lons)
-    # Line integral based on Green's Theorem, assumes spherical Earth
-    #close polygon
-    if lats[0]!=lats[-1]:
-        lats = append(lats, lats[0])
-        lons = append(lons, lons[0])
-    #colatitudes relative to (0,0)
-    a = sin(lats/2)**2 + cos(lats)* sin(lons/2)**2
-    colat = 2*arctan2( sqrt(a), sqrt(1-a) )
-    #azimuths relative to (0,0)
-    az = arctan2(cos(lats) * sin(lons), sin(lats)) % (2*pi)
-   # Calculate diffs
-    # daz = diff(az) % (2*pi)
-    daz = diff(az)
-    daz = (daz + pi) % (2 * pi) - pi
-    deltas=diff(colat)/2
-    colat=colat[0:-1]+deltas
-    # Perform integral
-    integrands = (1-cos(colat)) * daz
-    # Integrate
-    area = abs(sum(integrands))/(4*pi)
-    area = min(area,1-area)
-    if radius is not None: #return in units of radius
-        return area * 4*pi*radius**2
-    else: #return in ratio of sphere total area
-        return area
-
-# Find area of Antarctica
-lsm.coord('latitude').guess_bounds()
-lsm.coord('longitude').guess_bounds()
-cell_areas = iris.analysis.cartography.area_weights(lsm)
-
-
-co = {"type": "Polygon", "coordinates": [
-    [(max(lsm.coord('longitude').points), max(lsm.coord('latitude').points)),
-     (max(lsm.coord('longitude').points), min(lsm.coord('latitude').points)),
-     (min(lsm.coord('longitude').points), min(lsm.coord('latitude').points)),
-     (min(lsm.coord('longitude').points), max(lsm.coord('latitude').points))]]}
-lon, lat = zip(*co['coordinates'][0])
-from pyproj import Proj
-lat_1 = min(lsm.coord('latitude').points)
-lat_2 = max(lsm.coord('latitude').points)
-lat_0= max(lsm.coord('latitude').points)-(max(lsm.coord('latitude').points)-min(lsm.coord('latitude').points))
-lon_0 =max(lsm.coord('longitude').points)-(max(lsm.coord('longitude').points)-min(lsm.coord('longitude').points))
-
-pa = Proj("+proj=aea +lat_1=lat_1 +lat_2=lat_2 +lat_0=lat_0 +lon_0=lon_0")
-pa = Proj("+proj=aea +lat_1=-90 +lat_2=-55 +lat_0=-74 +lon_0=lon_0-79.75")
-x, y = pa(lon, lat)
-cop = {"type": "Polygon", "coordinates": [zip(x, y)]}
-from shapely.geometry import shape
-shape(cop).area  # 268952044107.43506
-
-
-
-
-## Calculate SMB
-# SMB = precip - evap - sublim - runoff
-
-os.chdir('AntSMB')
-pr_list = iris.load('pr_ccam*-1960-1999.nc') # Load all available historical simulations
-era_int = iris.load_cube('pr_ccam_eraint_44i_50km_day.1980-2015.nc') # Full ERA historical series
-
 
 ## Validation? - Do I need to do this or will Chris's script do it?
 # After Mottram et al. (2020): SMB values compared with observations in three steps:
