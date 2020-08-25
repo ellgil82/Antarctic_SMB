@@ -1,5 +1,6 @@
 host = 'jasmin'
 
+import sys
 if host == 'jasmin':
     filepath = '/gws/nopw/j04/bas_climate/users/ellgil82/AntSMB/'
     sys.path.append('/gws/nopw/j04/bas_climate/users/ellgil82/scripts/Tools/')
@@ -27,15 +28,28 @@ East_Antarctica = iris.Constraint(longitude=lambda v: -40 <= v <= 180,# & longit
 West_Antarctica = iris.Constraint(longitude=lambda v: -179 <= v <= -40,
                                   latitude=lambda v: -90 <= v <= -72)
 
+
+# Convert units
+for v in [pr, evap, mrro, mrros, snm]:
+    v.convert_units('kg/m2/d')
+    iris.coord_categorisation.add_year(v, 'time', name='year')
+
+pr_annual_tot = pr.aggregated_by(['year'],iris.analysis.SUM)
+evap_annual_tot = evap.aggregated_by(['year'], iris.analysis.SUM)
+mrro_annual_tot = mrro.aggregated_by(['year'], iris.analysis.SUM)
+mrros_annual_tot = mrros.aggregated_by(['year'], iris.analysis.SUM)
+snm_annual_tot = snm.aggregated_by(['year'], iris.analysis.SUM)
+
+
 def load_model_data(var_name, region_name, model_name, scenarios):
     #  Load data for each scenario.
-    historical = iris.load_cube(filepath + var_name + '_ccam_'+ model_name + '_ant-44i_50km_day.historical.nc', region_name)
-    iris.coord_categorisation.add_season(historical, 'time', name='clim_season')
-    iris.coord_categorisation.add_season_year(historical, 'time', name='season_year')
-    iris.coord_categorisation.add_year(historical, 'time', name='year')
-    historical_annual_seasonal_mean = historical.aggregated_by(['clim_season', 'season_year'],iris.analysis.MEAN)
-    historical_annual_mean = historical.aggregated_by(['year'],iris.analysis.MEAN)
-    # Generate area-weights array. As e1 and a1b are on the same grid we can
+historical = iris.load_cube(filepath + var_name + '_ccam_'+ model_name + '_ant-44i_50km_day.historical.nc', region_name)
+iris.coord_categorisation.add_season(historical, 'time', name='clim_season')
+iris.coord_categorisation.add_season_year(historical, 'time', name='season_year')
+iris.coord_categorisation.add_year(historical, 'time', name='year')
+historical.convert_units('kg/m2/d')
+historical_annual_seasonal_mean = historical.aggregated_by(['clim_season', 'season_year'],iris.analysis.MEAN)
+historical_annual_tot = historical.aggregated_by(['year'],iris.analysis.SUM) # time series of n=36 yrs, annual tot
     # do this just once and re-use. This method requires bounds on lat/lon
     # coords, so let's add some in sensible locations using the "guess_bounds"
     # method.
@@ -48,8 +62,8 @@ def load_model_data(var_name, region_name, model_name, scenarios):
                                                                 iris.analysis.MEAN,
                                                                 weights=historical_grid_areas)
     #historical_annual_mean = iris.analysis.maths.multiply(historical_annual_mean, 31579200.)  # kg/m2/yr
-    historical_annual_mean.coord('latitude').guess_bounds()
-    historical_annual_mean.coord('longitude').guess_bounds()
+    historical_annual_tot.coord('latitude').guess_bounds()
+    historical_annual_tot.coord('longitude').guess_bounds()
     historical_grid_areas = iris.analysis.cartography.area_weights(historical_annual_mean)
     historical_annual_mean = historical_annual_mean.collapsed(['latitude', 'longitude'],
                                                    iris.analysis.MEAN,
@@ -89,8 +103,10 @@ for v in ['snw', 'hfls', 'hfss',]: #'pr', 'evspsbl', 'mrros', 'prsn'
         MMM = np.mean(an_model_list, axis = 0)
         max_an = np.max(an_model_list, axis=0)
         min_an = np.min(an_model_list, axis = 0)
+        p95 = np.percentile(an_model_list, 95, axis = 0)
+        p5 = np.percentile(an_model_list, 5, axis=0)
         plt.plot(gfdl_an.coord('year').points, MMM, lw = 3, color = 'k', label = 'multi-model mean' )
-        plt.fill_between(gfdl_an.coord('year').points, min_an, max_an, color = 'lightgrey', zorder = 1)
+        plt.fill_between(gfdl_an.coord('year').points, p5, p95, color = 'lightgrey', zorder = 1)
         plt.ylabel('Annual mean ' + v + ' (kg/m2/yr)', rotation=90)
         plt.plot(era_an.coord('year').points, era_an.data, label='historical ERA-Interim', lw=1, color='royalblue')
         #ax[1].plot(np.arange(1980, 2016, 0.25), era_seas.data, label='historical ERA-Interim', lw=1, color='royalblue')
