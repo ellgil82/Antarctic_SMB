@@ -9,9 +9,10 @@ Dependencies:
 
 '''
 
-
+# Define host HPC where script is running
 host = 'bsl'
 
+# Define host-specific filepath and location of additional python tool scripts
 import sys
 if host == 'jasmin':
     filepath = '/gws/nopw/j04/bas_climate/users/ellgil82/AntSMB/'
@@ -23,7 +24,6 @@ elif host == 'bsl':
 import iris
 import numpy as np
 import matplotlib.pyplot as plt
-import pymc3 as pm
 import threddsclient
 import iris.plot as iplt
 import iris.quickplot as qplt
@@ -34,6 +34,10 @@ import cartopy.crs as ccrs
 import cartopy.feature
 from divg_temp_colourmap import shiftedColorMap
 import matplotlib
+from cartopy.mpl.geoaxes import GeoAxes
+from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+from mpl_toolkits.axes_grid1 import AxesGrid
+import pandas as pd
 
 # Create domain constraints.
 Antarctic_peninsula = iris.Constraint(longitude=lambda v: -80 <= v <= -55,
@@ -43,77 +47,13 @@ East_Antarctica = iris.Constraint(longitude=lambda v: -40 <= v <= 180,# & longit
 West_Antarctica = iris.Constraint(longitude=lambda v: -179 <= v <= -40,
                                   latitude=lambda v: -90 <= v <= -72)
 # Choose region of interest
-region = 'AIS'
+#region = 'AIS'
+string_dict = {'AIS': 'AIS',
+               Antarctic_peninsula: 'AP',
+               West_Antarctica: 'WA',
+               East_Antarctica: 'EA'}
 
-# Load orography and coastlines
-orog_full = iris.load_cube(filepath + 'orog.nc')
-lsm_full = iris.load_cube(filepath + 'sftlf.nc')
-
-# Load relevant SMB files
-if region == 'AIS':
-    pr = iris.load_cube(filepath + 'pr_ccam_eraint_ant-44i_50km_day.historical.nc')
-    evap = iris.load_cube(filepath + 'evspsbl_ccam_eraint_ant-44i_50km_day.historical.nc')
-    mrro = iris.load_cube(filepath + 'mrro_ccam_eraint_ant-44i_50km_day.historical.nc')
-    mrros = iris.load_cube(filepath + 'mrros_ccam_eraint_ant-44i_50km_day.historical.nc')
-    snm = iris.load_cube(filepath + 'snm_ccam_eraint_ant-44i_50km_day.historical.nc')
-    #Load orography and coastlines
-    orog = iris.load_cube(filepath + 'orog.nc')
-    lsm = iris.load_cube(filepath + 'sftlf.nc')
-    lsm = lsm / 100
-    grid_area = iris.load_cube(filepath + 'grid_area.nc')
-else:
-    pr = iris.load_cube(filepath + 'pr_ccam_eraint_ant-44i_50km_day.historical.nc', region)
-    evap = iris.load_cube(filepath + 'evspsbl_ccam_eraint_ant-44i_50km_day.historical.nc', region)
-    mrro = iris.load_cube(filepath + 'mrro_ccam_eraint_ant-44i_50km_day.historical.nc', region)
-    mrros = iris.load_cube(filepath + 'mrros_ccam_eraint_ant-44i_50km_day.historical.nc', region)
-    snm = iris.load_cube(filepath + 'snm_ccam_eraint_ant-44i_50km_day.historical.nc', region)
-    #Load orography and coastlines
-    orog = iris.load_cube(filepath + 'orog.nc', region)
-    lsm = iris.load_cube(filepath + 'sftlf.nc', region)
-    lsm = lsm / 100
-    grid_area = iris.load_cube(filepath + 'grid_area.nc', region)
-
-# Convert units
-for v in [pr, evap, mrro, mrros, snm]:
-    v.convert_units('kg/m2/d')
-    iris.coord_categorisation.add_year(v, 'time', name='year')
-
-pr_annual_tot = pr.aggregated_by(['year'],iris.analysis.SUM)
-evap_annual_tot = evap.aggregated_by(['year'], iris.analysis.SUM)
-mrro_annual_tot = mrro.aggregated_by(['year'], iris.analysis.SUM)
-mrros_annual_tot = mrros.aggregated_by(['year'], iris.analysis.SUM)
-snm_annual_tot = snm.aggregated_by(['year'], iris.analysis.SUM)
-
-grid_area_masked = grid_area * lsm
-
-pr_an_tot = (pr_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
-evap_an_tot = (evap_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
-mrro_an_tot = (mrro_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
-mrros_an_tot = (mrros_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
-snm_an_tot = (snm_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
-
-## Calculate SMB
-# SMB = precip - evap - sublim - runoff
-SMB = pr - evap - mrros # no sublimation file
-SMB_annual_tot = pr_annual_tot - evap_annual_tot# - mrro_annual_tot
-SMB_an_tot = (SMB_annual_tot.collapsed('year', iris.analysis.MEAN) * grid_area_masked).data.sum() / 1e12
-
-print('area ' + str(grid_area_masked.data.sum()/1e12) + ' x 10^6 km2') # in 10^6 km2
-print('pr ' + str(pr_an_tot) + ' Gt yr-1')
-print('evap ' + str(evap_an_tot) + ' Gt yr-1')
-print('snm ' + str(snm_an_tot) + ' Gt yr-1')
-print('mrro ' + str(mrro_an_tot) + ' Gt yr-1')
-print('SMB  ' + str(SMB_an_tot) + ' Gt yr-1')
-
-# put bounds on a simple point coordinate.
-lsm.coord('latitude').guess_bounds()
-lsm.coord('longitude').guess_bounds()
-
-# turn the iris Cube data structure into numpy arrays
-gridlons = lsm.coord('longitude').contiguous_bounds()
-gridlats = lsm.coord('latitude').contiguous_bounds()
-
-def plot_SMB(SMBvar):
+def plot_SMB(SMBvar, region, mean_or_SD):
     fig = plt.figure(figsize=[10, 6])
     ax = plt.subplot(1, 1, 1, projection=ccrs.SouthPolarStereo())
     fig.subplots_adjust(bottom=0.05, top=0.9, left=0.04, right=0.85, wspace=0.02)
@@ -128,50 +68,187 @@ def plot_SMB(SMBvar):
     #circle = mpath.Path(verts * radius + center)
     #ax.set_boundary(circle, transform=ax.transAxes)
     ax.spines['geo'].set_visible(False)
-    mean_data = SMBvar.collapsed('time', iris.analysis.MEAN).data
-        #mean_data[lsm.data==0] = 0
+    if mean_or_SD == 'mean':
+        mean_data = SMBvar.collapsed('time', iris.analysis.MEAN).data
+    elif mean_or_SD == 'SD':
+        mean_data = SMBvar.collapsed('time', iris.analysis.STD_DEV).data
     squished_cmap = shiftedColorMap(cmap=matplotlib.cm.coolwarm, min_val=-100., max_val=1000., name='squished_cmap', var=mean_data,
                                     start=0.3, stop=0.7)
     f = ax.pcolormesh(gridlons, gridlats, np.ma.masked_where(lsm.data == 0, mean_data), transform = ccrs.PlateCarree(),
                     cmap=squished_cmap, vmin = -100, vmax = 1000)
     ax.contour(lsm_full.coord('longitude').points, lsm_full.coord('latitude').points, lsm_full.data>0, levels = [0], linewidths = 2, colors = 'k', transform = ccrs.PlateCarree())
     CbAx = fig.add_axes([0.85, 0.15, 0.02, 0.6])
-    cb = plt.colorbar(f, orientation='vertical',  cax = CbAx) #shrink = 0.8,
+    cb = plt.colorbar(f, orientation='vertical',  cax = CbAx, extend = 'both') #shrink = 0.8,
     cb.solids.set_edgecolor("face")
     cb.outline.set_edgecolor('dimgrey')
     cb.ax.tick_params(which='both', axis='both', labelsize=20, labelcolor='dimgrey', pad=10, size=0, tick1On=False, tick2On=False)
     cb.outline.set_linewidth(2)
-    cb.ax.set_title('Annual mean\nSMB (kg m£^{-2}$ yr$^{-1}$)', fontname='Helvetica', color='dimgrey', fontsize=20, pad = 20)
+    cb.ax.set_title('Annual mean\nSMB (kg m$^{-2}$ yr$^{-1}$)', fontname='Helvetica', color='dimgrey', fontsize=20, pad = 20)
     gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True,  y_inline = True, linewidth=2, color='gray', alpha=0.5, linestyle=':')
     gl.xlabel_style = {'color': 'dimgrey', 'size': 20, }
     gl.ylabel_style =  {'color': 'dimgrey', 'size': 20, }
-    #ax.outline_patch.set_linewidth(2)
-    if region == 'AIS':
-        plt.savefig(filepath + 'ERA-Interim_historical_mean_SMB_AIS.png')
-    elif region == Antarctic_peninsula:
-        plt.savefig(filepath + 'ERA-Interim_historical_mean_SMB_AP.png')
-    elif region == West_Antarctica:
-        plt.savefig(filepath + 'ERA-Interim_historical_mean_SMB_WA.png')
-    elif region == East_Antarctica:
-        plt.savefig(filepath + 'ERA-Interim_historical_mean_SMB_EA.png')
+    plt.savefig(filepath + 'ERA-Interim_historical_'+ mean_or_SD + '_SMB_' + string_dict[region] + '.png')
     plt.show()
 
-plot_SMB(SMB_annual_tot)
+def plot_SMB_components(region, mean_or_SD, components):
+    orog_full = iris.load_cube(filepath + 'orog.nc')
+    lsm_full = iris.load_cube(filepath + 'sftlf.nc')
+    if region == 'AIS':
+        lsm = lsm_full
+    else:
+        lsm = iris.load_cube(filepath + 'sftlf.nc', region)
+    lsm.coord('latitude').guess_bounds()
+    lsm.coord('longitude').guess_bounds()
+    # turn the iris Cube data structure into numpy arrays
+    gridlons = lsm.coord('longitude').contiguous_bounds()
+    gridlats = lsm.coord('latitude').contiguous_bounds()
+    projection = ccrs.SouthPolarStereo()
+    axes_class = (GeoAxes,
+                  dict(map_projection=projection))
+    fig = plt.figure(figsize=(20, 14))
+    axgr = AxesGrid(fig, 111, axes_class=axes_class,
+                    nrows_ncols=(2, 3),
+                    axes_pad=2,
+                    #cbar_location='right',
+                    #cbar_mode='single',
+                    #cbar_pad=0.4,
+                    #cbar_size='2.5%',
+                    label_mode='')
+    titles = ['pr', 'evapsbl', 'sbl', 'mrro', 'snm', 'SMB', 'SD of SMB'] # Will miss SD SMB out if sbl inc.
+    for i, ax in enumerate(axgr):
+        ax.set_extent([-180, 180, -90, -59.5], ccrs.PlateCarree())
+        squished_cmap = shiftedColorMap(cmap=matplotlib.cm.coolwarm_r, min_val=-100., max_val=1000., name='squished_cmap',
+                                        var=components[i],
+                                        start=0.3, stop=0.7)
+        ax.contour(lsm_full.coord('longitude').points, lsm_full.coord('latitude').points, lsm_full.data>0, levels = [0], linewidths = 2, colors = 'k', transform = ccrs.PlateCarree())
+        f = ax.pcolormesh(gridlons, gridlats, np.ma.masked_where(lsm.data == 0, components[i]),
+                          transform=ccrs.PlateCarree(),
+                          cmap=squished_cmap, vmin=-100, vmax=1000)
+        ax.spines['geo'].set_visible(False)
+        gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True, y_inline=True, linewidth=2, color='gray', alpha=0.5,
+                          linestyle=':')
+        gl.xlabel_style = {'color': 'dimgrey', 'size': 20, }
+        gl.ylabel_style = {'color': 'dimgrey', 'size': 20, }
+        ax.set_title(titles[i], fontsize = 24, fontweight = 'bold', color = 'dimgrey', pad = 20)
+    #cb = axgr.cbar_axes[0].colorbar(f, extend='both')#, shrink = 0.8), orientation='vertical',
+    CbAx = fig.add_axes([0.9, 0.15, 0.015, 0.6])
+    cb = fig.colorbar(f, extend = 'both', orientation = 'vertical',  cax = CbAx)
+    cb.solids.set_edgecolor("face")
+    cb.outline.set_edgecolor('dimgrey')
+    cb.ax.tick_params(which='both', axis='both', labelsize=20, labelcolor='dimgrey', pad=10, size=0, tick1On=False,
+                      tick2On=False)
+    cb.outline.set_linewidth(2)
+    cb.ax.set_title('Annual mean\n (kg m$^{-2}$ yr$^{-1}$)', fontname='Helvetica', color='dimgrey', fontsize=20,
+                    pad=20)
+    fig.subplots_adjust(bottom=0.05, top=0.9, left=0.05, right=0.85, wspace=0.18, hspace = 0.18)
+    plt.savefig(filepath + 'ERA-Interim_historical_SMB_components_' + mean_or_SD + '_' + string_dict[region] + '.png')
+    #plt.show()
 
+def process_data(region, mean_or_SD):
+    # Load orography and coastlines
+    orog_full = iris.load_cube(filepath + 'orog.nc')
+    lsm_full = iris.load_cube(filepath + 'sftlf.nc')
+    # Load relevant SMB files
+    if region == 'AIS':
+        pr = iris.load_cube(filepath + 'pr_ccam_eraint_ant-44i_50km_day.historical.nc')
+        evap = iris.load_cube(filepath + 'evspsbl_ccam_eraint_ant-44i_50km_day.historical.nc')
+        mrro = iris.load_cube(filepath + 'mrro_ccam_eraint_ant-44i_50km_day.historical.nc')
+        mrros = iris.load_cube(filepath + 'mrros_ccam_eraint_ant-44i_50km_day.historical.nc')
+        snm = iris.load_cube(filepath + 'snm_ccam_eraint_ant-44i_50km_day.historical.nc')
+        sbl = iris.load_cube(filepath + 'sbl_ccam_eraint_ant-44i_50km_day.historical.nc')
+        #Load orography and coastlines
+        orog = iris.load_cube(filepath + 'orog.nc')
+        lsm = iris.load_cube(filepath + 'sftlf.nc')
+        lsm = lsm / 100
+        grid_area = iris.load_cube(filepath + 'grid_area.nc')
+    else:
+        pr = iris.load_cube(filepath + 'pr_ccam_eraint_ant-44i_50km_day.historical.nc', region)
+        evap = iris.load_cube(filepath + 'evspsbl_ccam_eraint_ant-44i_50km_day.historical.nc', region)
+        mrro = iris.load_cube(filepath + 'mrro_ccam_eraint_ant-44i_50km_day.historical.nc', region)
+        mrros = iris.load_cube(filepath + 'mrros_ccam_eraint_ant-44i_50km_day.historical.nc', region)
+        snm = iris.load_cube(filepath + 'snm_ccam_eraint_ant-44i_50km_day.historical.nc', region)
+        sbl = iris.load_cube(filepath + 'sbl_ccam_eraint_ant-44i_50km_day.historical.nc', region)
+        #Load orography and coastlines
+        orog = iris.load_cube(filepath + 'orog.nc', region)
+        lsm = iris.load_cube(filepath + 'sftlf.nc', region)
+        lsm = lsm / 100
+        grid_area = iris.load_cube(filepath + 'grid_area.nc', region)
+    # Convert units
+    for v in [pr, evap, mrro, mrros, snm, sbl]:
+        v.convert_units('kg/m2/d')
+        iris.coord_categorisation.add_year(v, 'time', name='year')
+    pr_annual_tot = pr.aggregated_by(['year'],iris.analysis.SUM)
+    evap_annual_tot = evap.aggregated_by(['year'], iris.analysis.SUM)
+    mrro_annual_tot = mrro.aggregated_by(['year'], iris.analysis.SUM)
+    snm_annual_tot = snm.aggregated_by(['year'], iris.analysis.SUM)
+    sbl_annual_tot = sbl.aggregated_by(['year'], iris.analysis.SUM)
+    grid_area_masked = grid_area * lsm
+    ## Calculate SMB
+    # SMB = precip - evap - sublim - runoff
+    SMB_annual_tot = pr_annual_tot - evap_annual_tot - sbl_annual_tot# - mrro_annual_tot
+    # put bounds on a simple point coordinate.
+    lsm.coord('latitude').guess_bounds()
+    lsm.coord('longitude').guess_bounds()
+    # turn the iris Cube data structure into numpy arrays
+    gridlons = lsm.coord('longitude').contiguous_bounds()
+    gridlats = lsm.coord('latitude').contiguous_bounds()
+    #plot_SMB(SMB_annual_tot, mean_or_SD= 'mean', region = region)
+    #plot_SMB(SMB_annual_tot, mean_or_SD= 'SD', region= region)
+    if mean_or_SD == 'mean':
+        anly_meth = iris.analysis.MEAN
+    elif mean_or_SD == 'SD':
+        anly_meth = iris.analysis.STD_DEV
+    components = [pr_annual_tot.collapsed('time', anly_meth).data, evap_annual_tot.collapsed('time', anly_meth).data,  sbl_annual_tot.collapsed('time', anly_meth).data,
+                  mrro_annual_tot.collapsed('time', anly_meth).data, snm_annual_tot.collapsed('time', anly_meth).data,
+                  SMB_annual_tot.collapsed('time', anly_meth).data, SMB_annual_tot.collapsed('time', iris.analysis.STD_DEV).data,]
+    annual_series = [pr_annual_tot, evap_annual_tot, sbl_annual_tot, mrro_annual_tot, snm_annual_tot, SMB_annual_tot]
+    plot_SMB_components(region=region, mean_or_SD='mean', components = components)
+    pr_an_srs = np.sum(annual_series[0].data * np.broadcast_to(grid_area_masked.data, annual_series[0].data.shape),
+                       axis=(1, 2)) / 1e12
+    evap_an_srs = np.sum(annual_series[1].data * np.broadcast_to(grid_area_masked.data, annual_series[1].data.shape),
+                         axis=(1, 2)) / 1e12
+    sbl_an_srs = np.sum(annual_series[2].data * np.broadcast_to(grid_area_masked.data, annual_series[1].data.shape),
+                         axis=(1, 2)) / 1e12
+    mrro_an_srs = np.sum(annual_series[3].data * np.broadcast_to(grid_area_masked.data, annual_series[0].data.shape),
+                         axis=(1, 2)) / 1e12
+    snm_an_srs = np.sum(annual_series[4].data * np.broadcast_to(grid_area_masked.data, annual_series[0].data.shape),
+                        axis=(1, 2)) / 1e12
+    SMB_an_srs = np.sum(annual_series[5].data * np.broadcast_to(grid_area_masked.data, annual_series[0].data.shape),
+                        axis=(1, 2)) / 1e12
+    component_stats = pd.DataFrame(index=['pr', 'evap', 'sbl', 'mrro', 'snm', 'SMB'])
+    component_stats['Mean'] = pd.Series(
+        [pr_an_srs.mean(), evap_an_srs.mean(), sbl-sbl_an_srs.mean(), mrro_an_srs.mean(), snm_an_srs.mean(), SMB_an_srs.mean()],
+        index=['pr', 'evap', 'sbl', 'mrro', 'snm', 'SMB'])
+    component_stats['SD'] = pd.Series(
+        [np.std(pr_an_srs), np.std(evap_an_srs), np.std(sbl_an_srs), np.std(mrro_an_srs), np.std(snm_an_srs), np.std(SMB_an_srs)],
+        index=['pr', 'evap', 'sbl', 'mrro', 'snm', 'SMB'])
+    component_stats.to_csv(filepath + string_dict[region] + '_summary_stats_SMB_components_Gt_yr.csv')
+    print(component_stats)
+    print('area ' + str(grid_area_masked.data.sum()/1e12) + ' x 10^6 km2') # in 10^6 km2
+    return components, annual_series
+
+#components, annual_series = process_data('AIS', mean_or_SD='mean')
+
+for r in [ Antarctic_peninsula, East_Antarctica, West_Antarctica, 'AIS',]:
+    components, annual_series = process_data(r, mean_or_SD='mean')
+
+plt.show()
+
+## NOTES
 ## Validation? - Do I need to do this or will Chris's script do it?
 # After Mottram et al. (2020): SMB values compared with observations in three steps:
 # 1. modelled SMB interpolated onto observation location
 # 2. interpolated SMB values from the same grid cell averaged (same for obs)
 # 3. produces 923 comparison pairs (923 grid cells with averaged obs and model values)
-#
 
+# to limit map extent to circular boundary:
 
-# gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True, linewidth=2, color='gray', alpha=0.5, linestyle='--')
-# gl.xlabels_top = False
-# gl.ylabels_left = False
-# gl.xlines = False
-# gl.xlocator = mticker.FixedLocator([-180, -45, 0, 45, 180])
-# gl.xformatter = LONGITUDE_FORMATTER
-# gl.yformatter = LATITUDE_FORMATTER
-# gl.xlabel_style = {'size': 15, 'color': 'gray'}
-# gl.xlabel_style = {'color': 'red', 'weight': 'bold'}
+# Compute a circle in axes coordinates, which we can use as a boundary
+# for the map. We can pan/zoom as much as we like - the boundary will be
+# permanently circular. !!! NOT COMPATIBLE WITH GRIDLINE LABELS !!!
+# theta = np.linspace(0, 2 * np.pi, 100)
+# center, radius = [0.5, 0.5], 0.5
+# verts = np.vstack([np.sin(theta), np.cos(theta)]).T
+# circle = mpath.Path(verts * radius + center)
+# ax.set_boundary(circle, transform=ax.transAxes)
+
