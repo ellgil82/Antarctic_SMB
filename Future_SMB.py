@@ -18,6 +18,15 @@ import iris.quickplot as qplt
 import iris.analysis.cartography
 import iris.coord_categorisation
 from divg_temp_colourmap import shiftedColorMap
+import cartopy.crs as ccrs
+import cartopy.feature
+from divg_temp_colourmap import shiftedColorMap
+import matplotlib
+from cartopy.mpl.geoaxes import GeoAxes
+from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+from mpl_toolkits.axes_grid1 import AxesGrid
+import pandas as pd
+
 
 # Create domain constraints.
 Antarctic_peninsula = iris.Constraint(longitude=lambda v: -80 <= v <= -55,
@@ -52,19 +61,25 @@ p95_SMB_2100 = np.percentile(future_SMB_srs[79:99], q = 95)
 
 def load_model_data(region_name, model_name, scenarios):
     #  Load data for each scenario.
-    var_names = ['pr', 'evspsbl', 'sbl', 'mrro', 'prsn', 'snm']
-    historical_cube_list = []
+    var_names = ['pr','mrro', 'sbl',   'snm']#'prsn',
+    if region_name == 'AIS':
+        reg_str = ''
+    else:
+        reg_str = region_name
+    historical_cube_dict = {}
     for var_name in var_names:
-        historical = iris.load_cube(filepath + var_name + '_ccam_'+ model_name + '_ant-44i_50km_day.historical.nc', region_name)
+        historical = iris.load_cube(filepath + var_name + '_ccam_'+ model_name + '_ant-44i_50km_day.1960-1969.nc', reg_str) # historical
         iris.coord_categorisation.add_season(historical, 'time', name='clim_season')
         iris.coord_categorisation.add_season_year(historical, 'time', name='season_year')
         iris.coord_categorisation.add_year(historical, 'time', name='year')
         historical.convert_units('kg/m2/d')
-        historical_cube_list.append(historical)
+        historical_cube_dict[var_name] = historical
+    historical_cube_dict['SMB'] = historical_cube_dict['pr'] - historical_cube_dict['mrro'] - historical_cube_dict['sbl']
+    #historical_cube_dict['rain'] = historical_cube_dict['pr'] - historical_cube_dict['prsn']
     # update labels of x axis to be seasonal (i.e. construct strings from series_labs[0]+series_labs[1])
     if scenarios == 'yes' or scenarios == 'y' or scenarios == 1:
-        rcp45_cube_list = []
-        rcp85_cube_list = []
+        rcp45_cube_dict = {}
+        rcp85_cube_dict = {}
         for var_name in var_names:
             rcp45 = iris.load_cube(filepath + var_name + '_ccam_' + model_name + '_ant-44i_50km_day.rcp45.nc', region_name)
             rcp85 = iris.load_cube(filepath + var_name + '_ccam_' + model_name + '_ant-44i_50km_day.rcp85.nc', region_name)
@@ -72,17 +87,22 @@ def load_model_data(region_name, model_name, scenarios):
             iris.coord_categorisation.add_season_year(rcp45, 'time', name='season_year')
             iris.coord_categorisation.add_year(rcp45, 'time', name='year')
             rcp45.convert_units('kg/m2/d')
-            rcp45_cube_list.append(rcp45)
+            rcp45_cube_dict[var_name] = rcp45
             iris.coord_categorisation.add_season(rcp85, 'time', name='clim_season')
             iris.coord_categorisation.add_season_year(rcp85, 'time', name='season_year')
             iris.coord_categorisation.add_year(rcp85, 'time', name='year')
             rcp85.convert_units('kg/m2/d')
+            rcp85_cube_dict[var_name] = rcp85
+        rcp45_cube_dict['SMB'] = rcp45_cube_dict['pr'] - rcp45_cube_dict['mrro'] - rcp45_cube_dict['sbl']
+        rcp45_cube_dict['rain'] = rcp45_cube_dict['pr'] - rcp45_cube_dict['prsn']
+        rcp85_cube_dict['SMB'] = rcp85_cube_dict['pr'] - rcp85_cube_dict['mrro'] - rcp85_cube_dict['sbl']
+        rcp85_cube_dict['rain'] = rcp85_cube_dict['pr'] - rcp85_cube_dict['prsn']
     if scenarios=='y' or scenarios=='yes':
-        return historical_cube_list, rcp45_cube_list, rcp85_cube_list
+        return historical_cube_dict, rcp45_cube_dict, rcp85_cube_dict
     else:
-        return historical_cube_list
+        return historical_cube_dict
 
-def plot_SMB_components(region, mean_or_SD, components):
+def plot_SMB_components(region, mean_or_SD, components, scenario):
     orog_full = iris.load_cube(filepath + 'orog.nc')
     lsm_full = iris.load_cube(filepath + 'sftlf.nc')
     if region == 'AIS':
@@ -106,7 +126,7 @@ def plot_SMB_components(region, mean_or_SD, components):
                     #cbar_pad=0.4,
                     #cbar_size='2.5%',
                     label_mode='')
-    titles = ['pr', 'evapsbl', 'sbl', 'mrro', 'snm', 'SMB', 'SD of SMB'] # Will miss SD SMB out if sbl inc.
+    titles = ['pr', 'sbl', 'mrro', 'snm', 'SMB', 'SD of SMB'] # Will miss SD SMB out if sbl inc.
     for i, ax in enumerate(axgr):
         ax.set_extent([-180, 180, -90, -59.5], ccrs.PlateCarree())
         squished_cmap = shiftedColorMap(cmap=matplotlib.cm.coolwarm_r, min_val=-100., max_val=1000., name='squished_cmap',
@@ -179,15 +199,15 @@ def process_data(region, mean_or_SD, cube_list, scenario):
         lsm = lsm / 100
         grid_area = iris.load_cube(filepath + 'grid_area.nc', region)
         grid_area_masked = grid_area * lsm
-    annual_totals = []
+    annual_totals = {}
     # Convert units
-    for v in cube_list:
-        v.convert_units('kg/m2/d')
-        yr_tot = v.aggregated_by(['year'],iris.analysis.SUM)
-        annual_totals.append(yr_tot)
+    for v in cube_list.keys():
+        cube_list[v].convert_units('kg/m2/d')
+        yr_tot = cube_list[v].aggregated_by(['year'],iris.analysis.SUM)
+        annual_totals[v] = yr_tot
     ## Calculate SMB
     # SMB = precip - evap - sublim - runoff
-    SMB_annual_tot = annual_totals[0] - annual_totals[1] - annual_totals[2] - annual_totals[3]# - mrro_annual_tot
+    SMB_annual_tot = annual_totals['pr'] - annual_totals['sbl'] - annual_totals['mrro']# - mrro_annual_tot
     # put bounds on a simple point coordinate.
     lsm.coord('latitude').guess_bounds()
     lsm.coord('longitude').guess_bounds()
@@ -200,30 +220,37 @@ def process_data(region, mean_or_SD, cube_list, scenario):
         anly_meth = iris.analysis.MEAN
     elif mean_or_SD == 'SD':
         anly_meth = iris.analysis.STD_DEV
-    # Create list of spatial means/standard deviations: 1) prsn, 2) evap, 3) sbl, 4) mrro, 5) prsn, 6) snm, 7) SMB, 8) SD of SMB
-    components = [annual_totals[0].collapsed('time', anly_meth).data, annual_totals[1].collapsed('time', anly_meth).data,
-                  annual_totals[2].collapsed('time', anly_meth).data, annual_totals[3].collapsed('time', anly_meth).data,
-                  annual_totals[4].collapsed('time', anly_meth).data, annual_totals[5].collapsed('time', anly_meth).data,
-                  SMB_annual_tot.collapsed('time', anly_meth).data, SMB_annual_tot.collapsed('time', iris.analysis.STD_DEV).data,]
+    # Create list of spatial means/standard deviations: 1) pr, 2) evap, 3) sbl, 4) mrro, 5) prsn, 6) snm, 7) SMB, 8) SD of SMB
+    components = [annual_totals['pr'].collapsed('time', anly_meth).data,
+                  annual_totals['sbl'].collapsed('time', anly_meth).data, annual_totals['mrro'].collapsed('time', anly_meth).data,
+                  annual_totals['snm'].collapsed('time', anly_meth).data,
+                  SMB_annual_tot.collapsed('time', anly_meth).data, SMB_annual_tot.collapsed('time', iris.analysis.STD_DEV).data,]# annual_totals['prsn'].collapsed('time', anly_meth).data,annual_totals['evapsbl'].collapsed('time', anly_meth).data,
     # Create list of spatially averaged mean time series: 1) prsn, 2) evap, 3) sbl, 4) mrro, 5) prsn, 6) snm, 7) SMB, 8) SD of SMB
     annual_series = []
-    for h in annual_totals:
-        srs =  np.sum(h.data * np.broadcast_to(grid_area_masked.data, h.data.shape), axis=(1, 2)) / 1e12
+    for h in annual_totals.keys():
+        srs =  np.sum(annual_totals[h].data * np.broadcast_to(grid_area_masked.data, annual_totals[h].data.shape), axis=(1, 2)) / 1e12
         annual_series.append(srs)
-    plot_SMB_components(region=region, mean_or_SD='mean', components = components, scenario = scenario)
+    #plot_SMB_components(region=region, mean_or_SD='mean', components = components, scenario = scenario)
     SMB_an_srs = np.sum(SMB_annual_tot.data * np.broadcast_to(grid_area_masked.data, SMB_annual_tot.data.shape), axis=(1, 2)) / 1e12
     annual_series.append(SMB_an_srs)
-    component_stats = pd.DataFrame(index=['pr', 'evap', 'sbl', 'mrro', 'snm', 'SMB'])
+    component_stats = pd.DataFrame(index=['pr', 'sbl', 'mrro', 'snm', 'SMB'])
     component_stats['Mean'] = pd.Series(
-        [annual_series[0].mean(), annual_series[1].mean(), annual_series[2].mean(), annual_series[3].mean(), annual_series[5].mean(), SMB_an_srs.mean()],
-        index=['pr', 'evap', 'sbl', 'mrro', 'snm', 'SMB'])
+        [annual_series[0].mean(), annual_series[1].mean(), annual_series[2].mean(), annual_series[3].mean(),  SMB_an_srs.mean()],
+        index=['pr','sbl', 'mrro', 'snm', 'SMB'])
     component_stats['SD'] = pd.Series(
-        [np.std(annual_series[0]), np.std(annual_series[1]), np.std(annual_series[2]), np.std(annual_series[3]), np.std(annual_series[5]), np.std(SMB_an_srs)],
-        index=['pr', 'evap', 'sbl', 'mrro', 'snm', 'SMB'])
+        [np.std(annual_series[0]), np.std(annual_series[1]), np.std(annual_series[2]), np.std(annual_series[3]),  np.std(SMB_an_srs)],
+        index=['pr', 'sbl', 'mrro', 'snm', 'SMB'])
     component_stats.to_csv(filepath + string_dict[region] + '_' + scenario + '_summary_stats_SMB_components_Gt_yr.csv')
     print(component_stats)
     print('area ' + str(grid_area_masked.data.sum()/1e12) + ' x 10^6 km2') # in 10^6 km2
     return components, annual_series
+
+historical_gfdl  = load_model_data('AIS', 'gfdl-esm2m', scenarios='no')
+historical_access = load_model_data('AIS', 'access1-0', scenarios='no')
+historical_hadgem = load_model_data('AIS', 'hadgem2', scenarios= 'no')
+hist_comp_gfdl, hist_srs_gfdl = process_data('AIS', mean_or_SD='mean', cube_list=historical_gfdl, scenario = 'gfdl-esm2m_60s')
+hist_comp_access, hist_srs_access = process_data('AIS', mean_or_SD='mean', cube_list=historical_access, scenario = 'access_60s')
+hist_comp_hadgem, hist_srs_hadgem = process_data('AIS', mean_or_SD='mean', cube_list=historical_hadgem, scenario = 'hadgem_60s')
 
 for r in [Antarctic_peninsula, West_Antarctica, East_Antarctica]:
     historical_era = load_model_data(r, 'eraint', scenarios='no')
