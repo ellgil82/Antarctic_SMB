@@ -18,7 +18,7 @@ Dependencies:
 
 
 # Define host HPC where script is running
-host = 'bsl'
+host = 'hd'
 
 # Define host-specific filepath and location of additional python tool scripts
 import sys
@@ -28,6 +28,12 @@ if host == 'jasmin':
 elif host == 'bsl':
     filepath = '/data/mac/ellgil82/AntSMB/MAR/'
     sys.path.append('/users/ellgil82/scripts/Tools/')
+elif host == 'rdg':
+    filepath = '/home/users/ke923690/AntSMB/'
+    sys.path.append('/home/users/ke923690/Python\ Scripts/Tools/')
+elif host == 'hd':
+    filepath = 'D:\\Data\\AntSMB\\MAR\\'
+    sys.path.append('/drives/d/scripts/Tools/')
 
 import iris
 import numpy as np
@@ -59,7 +65,7 @@ West_Antarctica = iris.Constraint(x=lambda v: -179 <= v <= -40,
                                   y=lambda v: -90 <= v <= -72)
 
 # Isolate region of interest ('' for whole continent)
-region = 'AP'
+region = ''
 
 def load_sims(region):
     ''' Load data for region of interest ('' for whole continent).
@@ -96,8 +102,9 @@ def load_sims(region):
             dict_list[j][k] = dict_list[j][k][:,0,:,:]
             iris.coord_categorisation.add_year(dict_list[j][k], 'time', name='year')
             dict_list[j][k] = dict_list[j][k].aggregated_by(['year'], iris.analysis.SUM) # return as annual mean
-        dict_list[j]['TT'] = dict_list['TT'][:,0,:,:]
-        dict_list[j]['TT'] = dict_list['TT'].aggregated_by(['year'], iris.analysis.MEAN) # return as mean
+        dict_list[j]['TT'] = dict_list[j]['TT'][:,0,:,:]
+        iris.coord_categorisation.add_year(dict_list[j]['TT'], 'time', name='year')
+        dict_list[j]['TT'] = dict_list[j]['TT'].aggregated_by(['year'], iris.analysis.MEAN) # return as mean
     # Load invariant data
     grd_ice = iris.load_cube(filepath + 'MARcst-AN35km-176x148.cdf', 'Grounded ice')
     continent = iris.load_cube(filepath + 'MARcst-AN35km-176x148.cdf', 'IF SOL3 EQ 4 THEN 1 ELSE 0')
@@ -181,7 +188,6 @@ MMM_T = (ACCESS_T.data.mean(axis = (1,2)) + CNRM_T.data.mean(axis = (1,2)) + CES
 
 GCM_T = {'ACCESS-1.3': ACCESS_T, 'CESM2': CESM_T, 'NorESM1-M': NorESM_T, 'CNRM-CM6-1':CNRM_T}
 
-
 ACCESS_preind = iris.load_cube(filepath + 'ACCES1-3_185001-190012.nc', 'Near-Surface Air Temperature')
 CESM_preind = iris.load_cube(filepath + 'CESM2_185001-190012.nc', 'Near-Surface Air Temperature')
 NorESM_preind = iris.load_cube(filepath + 'NorESM1-M_185001-190012.nc', 'Near-Surface Air Temperature')
@@ -190,8 +196,6 @@ for c in [ACCESS_preind, CESM_preind, NorESM_preind, CNRM_preind]:
     iris.coord_categorisation.add_year(c, 'time', name='month')
 
 MMM_preind = (CNRM_preind[:359].aggregated_by(['month'], iris.analysis.MEAN).data.mean() + NorESM_preind[:359].aggregated_by(['month'], iris.analysis.MEAN).data.mean()+ CESM_preind[:359].aggregated_by(['month'], iris.analysis.MEAN).data.mean()+ ACCESS_preind[:359].aggregated_by(['month'], iris.analysis.MEAN).data.mean())/4
-
-
 
 preind_refs = {'ACCESS1.3': ACCESS_preind,
               'CESM2': CESM_preind,
@@ -202,6 +206,7 @@ preind_refs = {'ACCESS1.3': ACCESS_preind,
 # create spatial maps of pre-industrial temps for each model
 preind_list = [np.mean(ACCESS_preind[:359,1:].data, axis = 0), np.mean(CESM_preind[:359].data, axis = 0), np.mean(NorESM_preind[:359].data, axis = 0), np.mean(CNRM_preind[:359].data, axis = 0),]
 
+# Plot temporal evolution of near-surface air temperature from 1950-2100 for each GCM
 labs = ['ACCESS-1.3', 'CESM2', 'NorESM1-M', 'CNRM-CM6-1']
 for i, j in enumerate([ACCESS_T, CESM_T, NorESM_T, CNRM_T]):
     plt.plot(range(1950,2101), np.mean(j.data - np.broadcast_to(preind_list[i].data, j.shape), axis = (1,2)) , label = labs[i])
@@ -553,48 +558,55 @@ rcParams['legend.fontsize'] = 18
 rcParams['legend.edgecolor'] = []
 rcParams['figure.figsize'] = [12,8]
 
-def boxplots():
-    # Create box plot for each variable
-    df_1p5 = pd.read_csv(filepath + 'Ice_shelf_abs_Gt_1p5_deg.csv', index_col = 0, )
-    df_1p5 = df_1p5.transpose()
-    df_1p5 = df_1p5.assign(Scenario=1.5)#header = ['ACCESS1.3','CESM2', 'NorESM1-M', 'CNRM-CM6-1']
-    df_2 = pd.read_csv(filepath + 'Ice_shelf_abs_Gt_2_deg.csv', index_col = 0)
-    df_2 = df_2.transpose()
-    df_2 = df_2.assign(Scenario=2)
-    df_4 = pd.read_csv(filepath + 'Ice_shelf_abs_Gt_4_deg.csv', index_col = 0)
-    df_4 = df_4.transpose()
-    df_4 = df_4.assign(Scenario=4)
-    cdf = pd.concat([df_1p5, df_2, df_4])
-    mdf = pd.melt(cdf, id_vars=['Scenario'], var_name=['Var'])
-    st = sns.axes_style("white")
-    sns.set(style ="white", font_scale =1.5, rc={'figure.figsize':(12,8)})
-    g = sns.catplot(x="Var", y="value", hue="Scenario", palette = 'Reds', data=mdf, kind="box")
-    g.spines['left'].set_linewidth(2)
-    g.spines['left'].set_color('dimgrey')
-    g.spines['bottom'].set_linewidth(2)
-    g.spines['bottom'].set_color('dimgrey')
-    g.set_xlabel('Component', fontsize = 20, color = 'dimgrey')
-    g.set_ylabel('Difference\n(Gt yr$^{-1}$)', labelpad = 50, rotation = 0, fontsize = 20, color = 'dimgrey')
-    g.tick_params(labelsize=20, labelcolor = 'dimgrey')
-    # Boxplot of differences
-    df = pd.read_csv(filepath + 'Ice_shelf_difs_Gt_1p5_to_4_deg.csv', index_col = 0)
-    dif_data = pd.melt(df.transpose())
-    st = sns.axes_style("white")
-    sns.set(style ="white", font_scale =1.5, rc={'figure.figsize':(12,8)})
-    g = sns.boxplot(x="variable", y="value", palette = 'Blues', data=dif_data, width = 0.35)
-    g.set_xlabel('Component', fontsize = 20, color = 'dimgrey')
-    g.set_ylabel('Difference\n(Gt yr$^{-1}$)', labelpad = 50, rotation = 0, fontsize = 20, color = 'dimgrey')
-    g.tick_params(labelsize=20, labelcolor = 'dimgrey')
-    sns.despine()
-    g.spines['left'].set_linewidth(2)
-    g.spines['left'].set_color('dimgrey')
-    g.spines['bottom'].set_linewidth(2)
-    g.spines['bottom'].set_color('dimgrey')
-    plt.axhline(y = 0, linewidth = 2, color = 'dimgrey', linestyle = '--')
-    plt.subplots_adjust(left = 0.2)
-    #plt.savefig(filepath + 'Boxplot_difs_components.png')
+def boxplots(difs_or_abs):
+    if difs_or_abs == 'abs':
+        # Create box plot for each variable
+        df_1p5 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_abs_Gt_1p5_deg.csv', index_col = 0, )
+        df_1p5 = df_1p5.transpose()
+        df_1p5 = df_1p5.assign(Scenario=1.5)#header = ['ACCESS1.3','CESM2', 'NorESM1-M', 'CNRM-CM6-1']
+        df_2 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_abs_Gt_2_deg.csv', index_col = 0)
+        df_2 = df_2.transpose()
+        df_2 = df_2.assign(Scenario=2)
+        df_4 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_abs_Gt_4_deg.csv', index_col = 0)
+        df_4 = df_4.transpose()
+        df_4 = df_4.assign(Scenario=4)
+        cdf = pd.concat([df_1p5, df_2, df_4])
+        mdf = pd.melt(cdf, id_vars=['Scenario'], var_name=['Var'])
+        st = sns.axes_style("white")
+        sns.set(style ="white", font_scale =1.5, rc={'figure.figsize':(12,8)})
+        g = sns.catplot(x="Var", y="value", hue="Scenario", palette = 'Reds', data=mdf, kind="box", whis=10)
+        ax = g.axes.flatten()
+        ax[0].spines['left'].set_linewidth(2)
+        ax[0].spines['left'].set_color('dimgrey')
+        ax[0].spines['bottom'].set_linewidth(2)
+        ax[0].spines['bottom'].set_color('dimgrey')
+        ax[0].set_xlabel('Component', fontsize = 20, color = 'dimgrey')
+        ax[0].set_ylabel('\nGt yr$^{-1}$', labelpad = 50, rotation = 0, fontsize = 20, color = 'dimgrey')
+        ax[0].tick_params(labelsize=20, labelcolor = 'dimgrey')
+        plt.subplots_adjust(left = 0.2)
+        plt.savefig(filepath + 'Boxplot_abs_components.png')
+    elif difs_or_abs == 'difs':
+        # Boxplot of differences
+        df = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_difs_Gt_1p5_to_4_deg.csv', index_col = 0)
+        dif_data = pd.melt(df.transpose())
+        st = sns.axes_style("white")
+        sns.set(style ="white", font_scale =1.5, rc={'figure.figsize':(12,8)})
+        g = sns.boxplot(x="variable", y="value", palette = 'Blues', data=dif_data, width = 0.35)
+        g.set_xlabel('Component', fontsize = 20, color = 'dimgrey')
+        g.set_ylabel('Difference\n(Gt yr$^{-1}$)', labelpad = 50, rotation = 0, fontsize = 20, color = 'dimgrey')
+        g.tick_params(labelsize=20, labelcolor = 'dimgrey')
+        sns.despine()
+        g.spines['left'].set_linewidth(2)
+        g.spines['left'].set_color('dimgrey')
+        g.spines['bottom'].set_linewidth(2)
+        g.spines['bottom'].set_color('dimgrey')
+        plt.axhline(y = 0, linewidth = 2, color = 'dimgrey', linestyle = '--')
+        plt.subplots_adjust(left = 0.2)
+        plt.savefig(filepath + 'Boxplot_difs_components.png')
     plt.show()
 
+#boxplots('abs')
+#plt.show()
 
 # Questions:
 # 1. what is current melt duration over ice shelves?
