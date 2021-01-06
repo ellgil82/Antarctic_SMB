@@ -16,7 +16,6 @@ Dependencies:
 ## Calculate melt extent - values (above threshold and > 1 mm w.e.) DONE
 ## Calculate isotherm - needs tas data
 
-
 # Define host HPC where script is running
 host = 'hd'
 
@@ -55,6 +54,8 @@ from cartopy.mpl.geoaxes import GeoAxes
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 from mpl_toolkits.axes_grid1 import AxesGrid
 import pandas as pd
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 
 # Create domain constraints.
 Antarctic_peninsula = iris.Constraint(x=lambda v: -80 <= v <= -55,
@@ -65,7 +66,7 @@ West_Antarctica = iris.Constraint(x=lambda v: -179 <= v <= -40,
                                   y=lambda v: -90 <= v <= -72)
 
 # Isolate region of interest ('' for whole continent)
-region = ''
+region = '' #'AP'
 
 def load_sims(region):
     ''' Load data for region of interest ('' for whole continent).
@@ -118,12 +119,6 @@ def load_sims(region):
     # Create dictionary of variables for later use
     stats = {'grd_ice': grd_ice, 'continent': continent, 'ice_mask': ice_mask, 'orog': orog, 'lat': lat, 'lon': lon,
             'rignot': rignot, 'grid_area': grid_area, 'rock': rock}
-    if region == 'AP':
-        for m in dict_list.keys():
-            for k in ['RU', 'ME', 'SMB', 'TT']:
-                dict_list[m][k] = dict_list[m][k][:, 80:120, :50]
-        for k in stats.keys():
-            stats[k] = stats[k][80:120,:50]
     # Create masks
     ice = np.ma.masked_less(stats['ice_mask'].data, 30)  # mask areas with < 30% ice coverage
     ais = np.ma.masked_equal(stats['continent'].data, 0)  # mask areas of ocean
@@ -142,13 +137,40 @@ def load_sims(region):
 
 #AP_dict_list, AP_masks, AP_stats = load_sims('AP')
 #WA_dict_list, WA_masks, WA_stats = load_sims(West_Antarctica)
-#EA_dict_list, EA_masks, EA_stats = load_sims(East_Antarctica)
+#EA_dict_list, EA_masks, EA_stats = load_sims('EA')
 dict_list, masks, stats = load_sims('')
+AIS_dict_list = dict_list.copy()
+AIS_masks = masks.copy()
+AIS_stats = stats.copy()
 
 if region == 'AP':
-    dict_list = AP_dict_list
-    masks = AP_masks
-    stats = AP_stats
+    for m in dict_list.keys():
+        for k in ['RU', 'ME', 'SMB', 'TT']:
+            dict_list[m][k] = dict_list[m][k][:, 80:120, :50]
+    for k in stats.keys():
+        stats[k] = stats[k][80:120, :50]
+    for n in masks.keys():
+        masks[n] = masks[n][80:120, :50]
+elif region == 'WA':
+    for m in dict_list.keys():
+        for k in ['RU', 'ME', 'SMB', 'TT']:
+            dict_list[m][k] = dict_list[m][k][:, 20:78, 30:97]
+    for k in stats.keys():
+        stats[k] = stats[k][20:78, 30:97]
+    for n in masks.keys():
+        masks[n] = masks[n][20:78, 30:97]
+elif region == 'EA':
+    for k in stats.keys():
+        stats[k] = stats[k][:, 67:]
+    for k in stats.keys():
+        stats[k].data[30:65, :35] = 0
+    for n in masks.keys():
+        masks[n] = masks[n][:, 67:]
+        masks[n][30:65, :35] = 0
+    for m in dict_list.keys():
+        for k in ['RU', 'ME', 'SMB', 'TT']:
+            dict_list[m][k] = dict_list[m][k][:, :, 67:]
+            dict_list[m][k].data[:, 30:65, :35] = 0
 
 def melt_dur():
     ACCESS_melt = {}
@@ -158,26 +180,35 @@ def melt_dur():
     melt_dict = {'ACCESS1.3': ACCESS_melt, 'CESM2': CESM_melt, 'NorESM1-M': NOR_melt, 'CNRM-CM6-1': CNRM_melt}
     for i, j in enumerate(['ACCESS1.3', 'CESM2', 'NorESM1-M', 'CNRM-CM6-1']):
         try:
-            melt_dict[j]['ME'] = iris.load_cube(filepath + 'ME_MAR_' + j + '_ssp585_future.nc')
+            melt_dict[j]['ME_dur'] = iris.load_cube(filepath + 'ME_MAR_' + j + '_rcp8.5_future.nc')
         except:
-            melt_dict[j]['ME'] = iris.load_cube(filepath + 'ME_MAR_' + j + '_rcp8.5_future.nc')
-        if region == 'AP':
-            melt_dict[j]['ME'] = melt_dict[j]['ME'][:,0, 80:120, :50]
-        else:
-            melt_dict[j]['ME'] = melt_dict[j]['ME'][:,0, :, :]
-        iris.coord_categorisation.add_year(melt_dict[j]['ME'], 'time', name='year')
-        melt_dict[j]['ME'].data[melt_dict[j]['ME'].data < 1] = 0
-        melt_dict[j]['ME'].data[np.broadcast_to(masks['shelf'], melt_dict[j]['ME'].shape) == 0] = np.nan
-        #msk_melt = melt_dict[j]['ME'] * (np.broadcast_to(masks['shelf'], melt_dict[j]['ME'].shape))
-        #melt_dict[j]['ME_dur'] = msk_melt.copy()
-        melt_dict[j]['ME_dur'] = melt_dict[j]['ME'].copy()
+            melt_dict[j]['ME_dur'] = iris.load_cube(filepath + 'ME_MAR_' + j + '_ssp585_future.nc')
+        melt_dict[j]['ME_dur'] = melt_dict[j]['ME_dur'][:,0,:,:]
+        iris.coord_categorisation.add_year(melt_dict[j]['ME_dur'], 'time', name='year')
         melt_dict[j]['ME_dur'].data[melt_dict[j]['ME_dur'].data < 1] = 0
-        melt_dict[j]['ME_dur'].data[melt_dict[j]['ME_dur'].data >= 1] = 1
+        melt_dict[j]['ME_dur'].data[np.broadcast_to(masks['shelf'], melt_dict[j]['ME_dur'].shape) == 0] = np.nan
+        melt_dict[j]['ME_dur'].data[melt_dict[j]['ME_dur'].data >= 1] = 1.
         melt_dict[j]['ME_dur'] = melt_dict[j]['ME_dur'].aggregated_by(['year'], iris.analysis.SUM)
     return melt_dict
 
 melt_dict = melt_dur()
 
+AIS_mask = np.zeros((148, 176))
+AIS_mask[AIS_mask == 0] = np.nan
+AIS_mask[masks['ais'] == 1] = 1.
+WA_mask = np.zeros((148, 176))
+WA_mask[WA_mask == 0] = np.nan
+WA_mask[ 20:78, 30:97] = 1.
+EA_mask = np.zeros((148, 176))
+EA_mask[EA_mask == 0] = np.nan
+EA_mask[:, 67:] = 1.
+EA_mask[30:65, :35] = np.nan
+AP_mask = np.zeros((148, 176))
+AP_mask[AP_mask == 0] = np.nan
+AP_mask[ 80:120, :50] = 1.
+
+
+'''
 # Find GCM warming periods ref 1950-79
 ACCESS_T = iris.load_cube(filepath + 'year_ACCESS1-3.nc2', 'Near-Surface Air Temperature')
 CESM_T = iris.load_cube(filepath + 'year_CESM2.nc2', 'Near-Surface Air Temperature')
@@ -187,6 +218,7 @@ MMM_T = (ACCESS_T.data.mean(axis = (1,2)) + CNRM_T.data.mean(axis = (1,2)) + CES
 #MMM_T = (ACCESS_T.data + CNRM_T.data + CESM_T.data + NorESM_T.data)/4
 
 GCM_T = {'ACCESS-1.3': ACCESS_T, 'CESM2': CESM_T, 'NorESM1-M': NorESM_T, 'CNRM-CM6-1':CNRM_T}
+
 
 ACCESS_preind = iris.load_cube(filepath + 'ACCES1-3_185001-190012.nc', 'Near-Surface Air Temperature')
 CESM_preind = iris.load_cube(filepath + 'CESM2_185001-190012.nc', 'Near-Surface Air Temperature')
@@ -206,7 +238,6 @@ preind_refs = {'ACCESS1.3': ACCESS_preind,
 # create spatial maps of pre-industrial temps for each model
 preind_list = [np.mean(ACCESS_preind[:359,1:].data, axis = 0), np.mean(CESM_preind[:359].data, axis = 0), np.mean(NorESM_preind[:359].data, axis = 0), np.mean(CNRM_preind[:359].data, axis = 0),]
 
-# Plot temporal evolution of near-surface air temperature from 1950-2100 for each GCM
 labs = ['ACCESS-1.3', 'CESM2', 'NorESM1-M', 'CNRM-CM6-1']
 for i, j in enumerate([ACCESS_T, CESM_T, NorESM_T, CNRM_T]):
     plt.plot(range(1950,2101), np.mean(j.data - np.broadcast_to(preind_list[i].data, j.shape), axis = (1,2)) , label = labs[i])
@@ -238,6 +269,8 @@ np.where(rolling_mn>1.5)
 #Ref: 1850-1879
 rolling_mn = pd.Series(np.mean(MMM_T, axis = (1,2))).rolling(window=30).mean().iloc[30-1:].values
 np.where(rolling_mn-np.mean(MMM_preind)>1.5)
+
+'''
 
 # dictionary of end years for averages of +1.5, +2 and +4 deg above 1950-79 reference.
 # Remember to -29 to each to get the start year. (MAR simulations 1980-2100 only)
@@ -280,8 +313,7 @@ def plot_scenarios(v, dT, difs_or_abs, threshold):
                                                axis=0)), start=0.15, stop=0.85)
                 cm = bwr_zero
             # Find mean difference between slice where warming = +dT and start of the simulation (i.e. the difference at dT)
-            c = axs[i].pcolormesh(np.mean(dict_list[j][v][slice_dict[j][tuple_idx] - 29:slice_dict[j][tuple_idx]].data, axis=0)
-                                  -np.mean(dict_list[j][v][slice_dict[j][:29]].data, axis=0), cmap = cm, vmin = -500, vmax = 500) # calculate difference relative to historical period
+            c = axs[i].pcolormesh(np.mean(dict_list[j][v][slice_dict[j][tuple_idx] - 29:slice_dict[j][tuple_idx]].data, axis=0) -np.mean(dict_list[j][v][:29].data, axis=0), cmap = cm, vmin = -500, vmax = 500) # calculate difference relative to historical period
         elif difs_or_abs == 'abs':
             if v == 'SMB':
                 lims = (-1000, 2000)
@@ -321,12 +353,12 @@ def plot_scenarios(v, dT, difs_or_abs, threshold):
     #plt.savefig(filepath + 'GCM_' + v + '_difs_+' + dT + '_deg_warming.eps')
     #plt.show()
 
-for i in ['ME', 'RU', 'SMB']:
-    for j in ['1p5', '2', '4']:
-        plot_scenarios(i, j, 'abs', threshold='no')
+#for i in ['ME', 'RU', 'SMB']:
+#    for j in ['1p5', '2', '4']:
+#       plot_scenarios(i, j, 'difs', threshold='no')
 
-for j in ['1p5', '2', '4']:
-    plot_melt_dur('ME_dur', dT = j, difs_or_abs='dif', threshold = 'yes')
+#for j in ['1p5', '2', '4']:
+#    plot_scenarios('ME', j, 'abs', threshold = 'yes')
 
 def plot_melt_dur(melt_dict, dT):
     # plot differences between 1950-79 and +1.5/2/4 degree world
@@ -355,12 +387,15 @@ def plot_melt_dur(melt_dict, dT):
     #cb.set_label(v, fontsize=20, rotation = 0, color='dimgrey', labelpad=30)
     cb.ax.set_title('Mean melt duration\n (d yr$^{-1}$)', fontname='Helvetica', color='dimgrey', fontsize=20, pad=20)
     plt.subplots_adjust(right = 0.8)
-    plt.savefig(filepath + 'GCM_melt_duration_abs_+'+ dT + '_deg_warming.png')
+    #plt.savefig(filepath + 'GCM_melt_duration_difs_+'+ dT + '_deg_warming.png')
     #plt.savefig(filepath + 'GCM_' + v + '_difs_+' + dT + '_deg_warming.eps')
     plt.show()
 
-for t in ['1p5', '2', '4']:
-    plot_melt_dur(melt_dict, t)
+#for t in ['1p5', '2', '4']:
+#    plot_melt_dur(melt_dict, t)
+
+#for j in ['1p5', '2', '4']:
+#    plot_scenarios('ME_dur', dT = j, difs_or_abs='dif', threshold = 'yes')
 
 dif_dict = {}
 for n in dict_list.keys():
@@ -371,23 +406,26 @@ for n in dict_list.keys():
 MMM_dict = {}
 for j in dict_list['CESM2'].keys():
     print(j)
-    MMM_dict[j] = (dict_list['ACCESS1.3'][j][1:].data + dict_list['CESM2'][j].data  + dict_list['NorESM1-M'][j].data
+    MMM_dict[j] = (dict_list['ACCESS1.3'][j][:120].data + dict_list['CESM2'][j].data  + dict_list['NorESM1-M'][j].data
                    + dict_list['CNRM-CM6-1'][j].data )/4 # Find multi-model mean, ignoring differing time coordinate definitions
 
-MMM_dict['ME_dur'] = (melt_dict['ACCESS1.3']['ME_dur'][1:].data + melt_dict['CESM2']['ME_dur'].data + melt_dict['NorESM1-M']['ME_dur'].data + melt_dict['CNRM-CM6-1']['ME_dur'].data)/4
+MMM_dict['ME_dur'] = (melt_dict['ACCESS1.3']['ME_dur'][:120].data + melt_dict['CESM2']['ME_dur'].data + melt_dict['NorESM1-M']['ME_dur'].data + melt_dict['CNRM-CM6-1']['ME_dur'].data)/4
 
 dif_dict['MMM'] = {}
 for m in MMM_dict.keys():
     dif_dict['MMM'][m]   = np.mean(MMM_dict[m][slice_dict['MMM'][2]-29:slice_dict['MMM'][2]], axis = 0) - np.mean(MMM_dict[m][slice_dict['MMM'][0]-29:slice_dict['MMM'][0]], axis = 0)
 
 def plot_dif_1p5_to_4(dif, dif_str):
-    fig, axs = plt.subplots(1,1, figsize = (12,8))
+    fig, axs = plt.subplots(1,1, figsize = (12,9))
     # Find mean difference between slice where warming = +dT and start of the simulation (i.e. the difference at dT)
     CbAx = fig.add_axes([0.85, 0.25, 0.03, 0.5])
     if dif_str[-3:] == 'SMB':
         c = axs.pcolormesh(dif, cmap = 'RdBu', vmin = -500, vmax = 500) # masks['shelf'] * dif
+    elif dif_str[4:7] == 'melt':
+        c = axs.pcolormesh(np.ma.masked_where((np.mean(MMM_dict['ME'][slice_dict['MMM'][2]-29:slice_dict['MMM'][2]].data, axis=0) < 725), dif), cmap='RdBu_r', vmin=-500, vmax=500)
     else:
         c = axs.pcolormesh(dif, cmap='RdBu_r', vmin=-500, vmax=500)
+    axs.contour(np.mean(MMM_dict['ME'][slice_dict['MMM'][2]-29:slice_dict['MMM'][2]].data, axis=0),  levels = [725], colors = 'cyan', linewidths = 3)
     axs.contour(masks['shelf'], levels=  [0], colors = 'k', linewidths = 0.8)
     axs.axis('off')
     cb = plt.colorbar(c, cax = CbAx, ticks = [-500, 0, 500], extend = 'both')
@@ -405,6 +443,7 @@ def plot_dif_1p5_to_4(dif, dif_str):
 #plot_dif_1p5_to_4(dif_dict['MMM']['ME'], dif_str = 'MMM_melt_amnt')
 #plot_dif_1p5_to_4(dif_dict['MMM']['RU'], dif_str = 'MMM_runoff')
 #plot_dif_1p5_to_4(dif_dict['MMM']['SMB'], dif_str = 'MMM_SMB')
+#plot_dif_1p5_to_4(dif_dict['MMM']['ME_dur'], dif_str = 'MMM_ME_dur')
 
 def mega_plot():
     # Caption: Multi-model mean differences in surface melt (ME), runoff (RU) and surface mass balance (SMB) between the
@@ -420,44 +459,46 @@ def mega_plot():
     CbAx = fig.add_axes([0.85,0.25, 0.03, 0.5])
     CbAx2 = CbAx.twinx()
     plid = 0
-    axs[0].annotate('1.5$^{\circ}$C', (-0.3, 0.5), xycoords = 'axes fraction', fontsize=20, color='dimgrey', )
-    axs[3].annotate('2$^{\circ}$C',  (-0.3, 0.5), xycoords = 'axes fraction', fontsize=20, color='dimgrey', )
-    axs[6].annotate('4$^{\circ}$C',  (-0.3, 0.5), xycoords = 'axes fraction', fontsize=20, color='dimgrey', )
+    axs[0].annotate('1.5$^{\circ}$C', (-0.3, 0.5), xycoords = 'axes fraction', fontsize=28, color='dimgrey', )
+    axs[3].annotate('2$^{\circ}$C',  (-0.3, 0.5), xycoords = 'axes fraction', fontsize=28, color='dimgrey', )
+    axs[6].annotate('4$^{\circ}$C',  (-0.3, 0.5), xycoords = 'axes fraction', fontsize=28, color='dimgrey', )
     for dT in [0,1,2]: # for each dT
-        for i, j in enumerate(MMM_dict.keys()):
+        for i, j in enumerate(['ME', 'RU', 'SMB']):
             if j == 'SMB':
                 cm = 'RdBu'
                 cax = CbAx
                 tick_pos = 'left'
-                tick_labs = ['+500 (SMB)', '0', '-500 (SMB)']
+                tick_labs = ['+500 (SMB)', '+250', '0', '-250', '-500 (SMB)']
             else:
                 cm = 'RdBu_r'
                 cax = CbAx2
                 tick_pos = 'right'
-                tick_labs = ['-500 (ME, RU)', '0', '+500 (ME, RU)']
+                tick_labs = ['-500 (ME, RU)', '-250', '0', '+250', '+500 (ME, RU)']
             # Find mean difference between slice where warming = +dT and start of the simulation (i.e. the difference at dT)
-            c = axs[plid + i].pcolormesh(masks['shelf'] * (np.mean(MMM_dict[j][slice_dict['MMM'][dT]-29:slice_dict['MMM'][dT]].data, axis = 0)-(np.mean(MMM_dict[j][:29].data, axis = 0))), cmap = cm, vmin = -500, vmax = 500)
-            axs[plid + i].set_title(j, fontsize=20, color='dimgrey', )
-            cb = plt.colorbar(c, cax=cax, ticks=[-500, 0, 500], extend='both')
+            c = axs[plid + i].pcolormesh( np.ma.masked_where((masks['ais'] == 0),(np.mean(MMM_dict[j][slice_dict['MMM'][dT]-29:slice_dict['MMM'][dT]].data, axis = 0)-(np.mean(MMM_dict[j][:29].data, axis = 0)))), cmap = cm, vmin = -500, vmax = 500)
+            #axs[plid + i].contourf(masks['ais'] == 1, colors= 'white')
+            axs[plid + i].set_title(j, fontsize=28, color='dimgrey', )
+            cb = plt.colorbar(c, cax=cax, ticks=[-500, -250, 0, 250, 500], extend='both')
             cb.set_ticklabels(tick_labs)
             cb.solids.set_edgecolor("face")
             cb.outline.set_edgecolor('dimgrey')
-            cb.ax.tick_params(which='both', axis='both', labelsize=20, labelcolor='dimgrey', pad=10, size=0,
+            cb.ax.tick_params(which='both', axis='both', labelsize=24, labelcolor='dimgrey', pad=10, size=0,
                               tick1On=False, tick2On=False)
             cb.outline.set_linewidth(2)
             cb.ax.xaxis.set_ticks_position('bottom')
             # cb.set_label(v, fontsize=20, rotation = 0, color='dimgrey', labelpad=30)
             cb.ax.set_title('Mean difference\n (kg m$^{-2}$ yr$^{-1}$)', fontname='Helvetica', color='dimgrey',
-                            fontsize=20, pad=20)
+                            fontsize=24, pad=20)
             cb.ax.yaxis.set_ticks_position(tick_pos)
             cb.ax.yaxis.set_label_position(tick_pos)
         plid = plid+3
     plt.subplots_adjust(right = 0.75, left = 0.1)
     plt.savefig(filepath + 'MMM_difs_at_each_deg_warming.png')
+    plt.savefig(filepath + 'MMM_difs_at_each_deg_warming.eps')
     #plt.savefig(filepath + 'GCM_' + v + '_difs_+' + dT + '_deg_warming.eps')
     plt.show()
 
-#mega_plot()
+mega_plot()
 
 # Produce data frame with values under different scenarios
 # Ice shelf areas, difference between 1.5 and 4 deg, as simulated by all models
@@ -470,19 +511,37 @@ for i in dif_dict.keys():
 
 df.to_csv(filepath + 'Ice_shelf_difs_Gt_1p5_to_4_deg' +  region + '.csv')
 
-df = pd.DataFrame(index = ['ME', 'RU', 'SMB'])
+df = pd.DataFrame(index = ['ME', 'ME_dur', 'RU', 'SMB'])
 dT = ['1p5', '2', '4', 'HIST' ]
 for n, j in enumerate(dT):
     for i in dict_list.keys():
         sum_ME = np.nansum(np.mean(dict_list[i]['ME'][slice_dict[i][n] - 29:slice_dict[i][n]].data, axis=0) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000))/1e12
+        mn_ME_dur = np.nanmean( np.mean(melt_dict[i]['ME_dur'][slice_dict[i][n] - 29:slice_dict[i][n]].data, axis=0) * stats['grid_area'].data *masks['shelf'] * (35000 * 35000)) / 1e12
         sum_RU = np.nansum(np.mean(dict_list[i]['RU'][slice_dict[i][n] - 29:slice_dict[i][n]].data, axis=0) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000))/1e12
         sum_SMB = np.nansum(np.mean(dict_list[i]['SMB'][slice_dict[i][n] - 29:slice_dict[i][n]].data, axis=0) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000))/1e12
         df[i] = pd.Series([sum_ME, sum_RU, sum_SMB], index = ['ME', 'RU', 'SMB'])
     sum_ME = np.nansum(np.mean(MMM_dict['ME'][slice_dict['MMM'][n] - 29:slice_dict['MMM'][n]].data, axis=0) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000)) / 1e12
+    mn_ME_dur =  np.nanmean(np.mean(MMM_dict['ME_dur'][slice_dict['MMM'][n] - 29:slice_dict['MMM'][n]].data, axis=0) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000)) / 1e12
     sum_RU = np.nansum(np.mean(MMM_dict['RU'][slice_dict['MMM'][n] - 29:slice_dict['MMM'][n]].data, axis=0) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000)) / 1e12
     sum_SMB = np.nansum(np.mean(MMM_dict['SMB'][slice_dict['MMM'][n] - 29:slice_dict['MMM'][n]].data, axis=0) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000)) / 1e12
-    df['MMM'] = pd.Series([sum_ME, sum_RU, sum_SMB], index=['ME', 'RU', 'SMB'])
+    df['MMM'] = pd.Series([sum_ME, mn_ME_dur, sum_RU, sum_SMB], index=['ME', 'ME_dur', 'RU', 'SMB'])
     df.to_csv(filepath + 'Ice_shelf_abs_Gt_'+ j + region + '_deg.csv')
+
+df = pd.DataFrame(index = ['ME', 'ME_dur', 'RU', 'SMB'])
+dT = ['1p5', '2', '4', 'HIST' ]
+for n, j in enumerate(dT):
+    for i in dict_list.keys():
+        sum_ME = np.nansum((np.mean(dict_list[i]['ME'][slice_dict[i][n] - 29:slice_dict[i][n]].data, axis=0) - np.mean(dict_list[i]['ME'][:29].data, axis=0)) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000))/1e12
+        mn_ME_dur = np.nanmean((np.mean(melt_dict[i]['ME_dur'][slice_dict[i][n] - 29:slice_dict[i][n]].data, axis=0) - np.mean(melt_dict[i]['ME_dur'][:29].data, axis=0)) * stats[ 'grid_area'].data * masks['shelf'] * (35000 * 35000)) / 1e12
+        sum_RU = np.nansum((np.mean(dict_list[i]['RU'][slice_dict[i][n] - 29:slice_dict[i][n]].data, axis=0) - np.mean(dict_list[i]['RU'][:29].data, axis=0))  * stats['grid_area'].data * masks['shelf'] * (35000 * 35000))/1e12
+        sum_SMB = np.nansum((np.mean(dict_list[i]['SMB'][slice_dict[i][n] - 29:slice_dict[i][n]].data, axis=0) - np.mean(dict_list[i]['SMB'][:29].data, axis=0))  * stats['grid_area'].data * masks['shelf'] * (35000 * 35000))/1e12
+        df[i] = pd.Series([sum_ME, mn_ME_dur, sum_RU, sum_SMB], index = ['ME', 'ME_dur', 'RU', 'SMB'])
+    sum_ME = np.nansum((np.mean(MMM_dict['ME'][slice_dict['MMM'][n] - 29:slice_dict['MMM'][n]].data, axis=0) - np.mean(MMM_dict['ME'][:29].data, axis=0)) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000)) / 1e12
+    mn_ME_dur = np.nanmean((np.mean(MMM_dict['ME_dur'][slice_dict['MMM'][n] - 29:slice_dict['MMM'][n]].data, axis=0) - np.mean( MMM_dict['ME_dur'][:29].data, axis=0)) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000)) / 1e12
+    sum_RU = np.nansum((np.mean(MMM_dict['RU'][slice_dict['MMM'][n] - 29:slice_dict['MMM'][n]].data, axis=0) - np.mean(MMM_dict['RU'][:29].data, axis=0)) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000)) / 1e12
+    sum_SMB = np.nansum((np.mean(MMM_dict['SMB'][slice_dict['MMM'][n] - 29:slice_dict['MMM'][n]].data, axis=0) - np.mean(MMM_dict['SMB'][:29].data, axis=0)) * stats['grid_area'].data * masks['shelf'] * (35000 * 35000)) / 1e12
+    df['MMM'] = pd.Series([sum_ME, mn_ME_dur, sum_RU, sum_SMB], index=['ME', 'ME_dur', 'RU', 'SMB'])
+    df.to_csv(filepath + 'Ice_shelf_difs_Gt_'+ j + region + '_deg.csv')
 
 # Calculate melt extent
 for m in dict_list.keys():
@@ -501,19 +560,20 @@ for m in dict_list.keys():
     dict_list[m]['melt_ext_725'].data[dict_list[m]['melt_ext_725'].data>725.] = 1
     dict_list[m]['melt_ext_725'] = (np.sum(dict_list[m]['melt_ext_725'].data * stats['grid_area'].data * masks['shelf'] * (35000 * 35000), axis = (1,2))/(stats['grid_area'].data * masks['shelf'] * (35000 * 35000)).sum())*100
 
-dict_list['ACCESS1.3']['melt_ext_725'] = dict_list['ACCESS1.3']['melt_ext_725'][1:]
+dict_list['ACCESS1.3']['melt_ext_725'] = dict_list['ACCESS1.3']['melt_ext_725'][:120]
 
 def melt_extent_plot():
     fig, ax = plt.subplots(1,1,figsize = (14,8))
-    ax.fill_between(range(1980, 2100), np.max([dict_list['CESM2']['melt_ext_725'],dict_list['NorESM1-M']['melt_ext_725'], dict_list['ACCESS1.3']['melt_ext_725'],
-                      dict_list['CNRM-CM6-1']['melt_ext_725']], axis = 0), np.min([dict_list['CESM2']['melt_ext_725'],dict_list['NorESM1-M']['melt_ext_725'],
+    ax.fill_between(range(1980, 2100), y1 = np.max([dict_list['CESM2']['melt_ext_725'],dict_list['NorESM1-M']['melt_ext_725'], dict_list['ACCESS1.3']['melt_ext_725'],
+                      dict_list['CNRM-CM6-1']['melt_ext_725']], axis = 0), y2 = np.min([dict_list['CESM2']['melt_ext_725'],dict_list['NorESM1-M']['melt_ext_725'],
                                                                                    dict_list['ACCESS1.3']['melt_ext_725'],dict_list['CNRM-CM6-1']['melt_ext_725']], axis = 0), color = 'dimgrey', alpha = 0.5, zorder = 1)
     for m in dict_list.keys():
-        ax.plot(range(1980, 2100), dict_list[m]['melt_ext_725'], label = m, linestyle = '--', alpha = 0.8, zorder = 2)
+        ax.plot(range(1980, 2100), dict_list[m]['melt_ext_725'], label = m, alpha = 0.8, zorder = 2)
     ax.plot(range(1980, 2100),np.mean([dict_list['CESM2']['melt_ext_725'],dict_list['NorESM1-M']['melt_ext_725'], dict_list['ACCESS1.3']['melt_ext_725'],
                       dict_list['CNRM-CM6-1']['melt_ext_725']], axis = 0), color = 'k', linewidth = 3, label = 'MMM', zorder = 3)
     ax.set_xticks([1980, 2000, 2020, 2040, 2060, 2080, 2100])
     ax.set_xlim(1980,2100)
+    ax.set_ylim(0,100)
     ax.set_ylabel('Ice shelf melt extent\n> 725 mm w.e. yr$^{-1}$ (%)', labelpad = 150, rotation = 0, fontsize = 20, color = 'dimgrey')
     lgd = ax.legend(bbox_to_anchor=(0.05, 1.), loc = 2, fontsize = 20)
     frame = lgd.get_frame()
@@ -527,7 +587,7 @@ def melt_extent_plot():
     ax.spines['right'].set_visible(False)
     plt.subplots_adjust(left = 0.35, right = 0.97)
     plt.savefig(filepath + 'pct_ice_shf_area_'+ region + '_abv_725.png')
-    plt.show()
+    #plt.show()
 
 melt_extent_plot()
 
@@ -548,6 +608,22 @@ for m in dict_list.keys():
 
 df.to_csv(filepath + 'pct_ice_shelf_area_'+ region + '_abv_725.csv')
 
+reg_masks = [AIS_mask, AP_mask, WA_mask, EA_mask]
+for n, region in enumerate(['AIS', 'AP', 'WA', 'EA']):
+    df = pd.DataFrame(index = ['HIST', '1.5', '2', '4'])
+    for m in melt_dict.keys():
+        df[m] = pd.Series([np.nanmean(np.nanmean(melt_dict[m]['ME_dur'].data[:29], axis = 0) * reg_masks[n]),
+                           np.nanmean(np.nanmean(melt_dict[m]['ME_dur'].data[slice_dict[m][0] - 29: slice_dict[m][0]], axis = 0) * reg_masks[n]),
+                                   np.nanmean(np.nanmean(melt_dict[m]['ME_dur'].data[slice_dict[m][1] - 29: slice_dict[m][1]], axis = 0) * reg_masks[n]),
+                                           np.nanmean(np.nanmean(melt_dict[m]['ME_dur'].data[slice_dict[m][2] - 29: slice_dict[m][2]], axis = 0) * reg_masks[n])], index = ['HIST', '1.5', '2', '4'])
+        df['MMM'] = pd.Series([np.nanmean(np.nanmean(MMM_dict['ME_dur'].data[:29], axis = 0) * reg_masks[n]), np.nanmean(np.nanmean(MMM_dict['ME_dur'].data[slice_dict['MMM'][0] - 29: slice_dict['MMM'][0]], axis = 0) * reg_masks[n]),
+                                   np.nanmean(np.nanmean(MMM_dict['ME_dur'].data[slice_dict['MMM'][1] - 29: slice_dict['MMM'][1]], axis = 0) * reg_masks[n]),
+                                           np.nanmean(np.nanmean(MMM_dict['ME_dur'].data[
+                                                   slice_dict['MMM'][2] - 29: slice_dict['MMM'][2]], axis = 0) * reg_masks[n])], index = [ 'HIST','1.5', '2', '4'])
+    df.to_csv(filepath + 'ice_shelf_melt_dur_'+ region + '.csv')
+
+
+
 rcParams['font.family'] = 'sans-serif'
 rcParams['font.size'] = 20
 rcParams['font.sans-serif'] = ['Segoe UI', 'Helvetica', 'Liberation sans', 'Tahoma', 'DejaVu Sans', 'Verdana']
@@ -558,23 +634,24 @@ rcParams['legend.fontsize'] = 18
 rcParams['legend.edgecolor'] = []
 rcParams['figure.figsize'] = [12,8]
 
+
 def boxplots(difs_or_abs):
     if difs_or_abs == 'abs':
         # Create box plot for each variable
-        df_1p5 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_abs_Gt_1p5_deg.csv', index_col = 0, )
+        df_1p5 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_abs_Gt_1p5_deg.csv', index_col = 0, skiprows=[2] )
         df_1p5 = df_1p5.transpose()
         df_1p5 = df_1p5.assign(Scenario=1.5)#header = ['ACCESS1.3','CESM2', 'NorESM1-M', 'CNRM-CM6-1']
-        df_2 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_abs_Gt_2_deg.csv', index_col = 0)
+        df_2 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_abs_Gt_2_deg.csv', index_col = 0, skiprows=[2])
         df_2 = df_2.transpose()
         df_2 = df_2.assign(Scenario=2)
-        df_4 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_abs_Gt_4_deg.csv', index_col = 0)
+        df_4 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_abs_Gt_4_deg.csv', index_col = 0, skiprows=[2])
         df_4 = df_4.transpose()
         df_4 = df_4.assign(Scenario=4)
         cdf = pd.concat([df_1p5, df_2, df_4])
         mdf = pd.melt(cdf, id_vars=['Scenario'], var_name=['Var'])
         st = sns.axes_style("white")
         sns.set(style ="white", font_scale =1.5, rc={'figure.figsize':(12,8)})
-        g = sns.catplot(x="Var", y="value", hue="Scenario", palette = 'Reds', data=mdf, kind="box", whis=10)
+        g = sns.catplot(x="Var", y="value", hue="Scenario", palette = 'Reds', data=mdf, kind="strip", dodge = True)#, marker = ['x', '*', 'X', '^', 'O'])
         ax = g.axes.flatten()
         ax[0].spines['left'].set_linewidth(2)
         ax[0].spines['left'].set_color('dimgrey')
@@ -584,10 +661,10 @@ def boxplots(difs_or_abs):
         ax[0].set_ylabel('\nGt yr$^{-1}$', labelpad = 50, rotation = 0, fontsize = 20, color = 'dimgrey')
         ax[0].tick_params(labelsize=20, labelcolor = 'dimgrey')
         plt.subplots_adjust(left = 0.2)
-        plt.savefig(filepath + 'Boxplot_abs_components.png')
+        #plt.savefig(filepath + 'Boxplot_abs_components.png')
     elif difs_or_abs == 'difs':
         # Boxplot of differences
-        df = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_difs_Gt_1p5_to_4_deg.csv', index_col = 0)
+        df = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_difs_Gt_1p5_to_4_deg.csv', index_col = 0, skiprows=[2])
         dif_data = pd.melt(df.transpose())
         st = sns.axes_style("white")
         sns.set(style ="white", font_scale =1.5, rc={'figure.figsize':(12,8)})
@@ -605,8 +682,149 @@ def boxplots(difs_or_abs):
         plt.savefig(filepath + 'Boxplot_difs_components.png')
     plt.show()
 
-#boxplots('abs')
-#plt.show()
+
+# Plot scatter scenarios
+def scatter_scen(abs_or_difs):
+    # Set up figure
+    if abs_or_difs == 'abs':
+        fig, ax = plt.subplots(figsize=(14, 8))
+        ax.set_xticks(ticks=[2, 6, 10])
+    elif abs_or_difs == 'difs':
+        fig, ax = plt.subplots(figsize=(8,5 ))
+        ax.set_xticks(ticks=[1,2,3])
+    ax.spines['left'].set_linewidth(2)
+    ax.spines['left'].set_color('dimgrey')
+    ax.spines['bottom'].set_linewidth(2)
+    ax.spines['bottom'].set_color('dimgrey')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.set_xticklabels(labels=['ME', 'RU', 'SMB'])
+    ax.set_xlabel('Component', fontsize=24, labelpad=30, color='dimgrey')
+    ax.set_ylabel('\nGt yr$^{-1}$', labelpad=50, rotation=0, fontsize=24, color='dimgrey')
+    ax.tick_params(labelsize=24, labelcolor='dimgrey')
+    plt.subplots_adjust(left=0.15, right=0.8)
+    # Set up dictionaries
+    scen_lookup = {1.5: 0, 2.0: 1, 4.0: 2}
+    if abs_or_difs == 'abs':
+        col_dict = {1.5: '#F6BFB3', 2.0: '#F78F78', 4.0: '#FC441B'}
+        var_lookup = {'ME': 1, 'RU': 5, 'SMB': 9}
+    elif abs_or_difs == 'difs':
+        col_dict = {'ME': '#CAE0F6', 'RU': '#AB21D1', 'SMB': '#1E990A'}
+        var_lookup = {'ME': 1, 'RU': 2, 'SMB': 3}
+    mkr_dict = {'ACCESS1.3': 'x', 'CESM2': 'P', 'CNRM-CM6-1': '^', 'NorESM1-M': '*', 'MMM': 'o'}
+    # Read data
+    if abs_or_difs == 'abs':
+        df_1p5 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_'+ abs_or_difs+'_Gt_1p5_deg.csv', index_col=0, skiprows=[2])
+        df_1p5 = df_1p5.transpose()
+        df_1p5 = df_1p5.assign(Scenario=1.5)  # header = ['ACCESS1.3','CESM2', 'NorESM1-M', 'CNRM-CM6-1']
+        df_2 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_'+ abs_or_difs+'_Gt_2_deg.csv', index_col=0, skiprows=[2])
+        df_2 = df_2.transpose()
+        df_2 = df_2.assign(Scenario=2)
+        df_4 = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_'+ abs_or_difs+'_Gt_4_deg.csv', index_col=0, skiprows=[2])
+        df_4 = df_4.transpose()
+        df_4 = df_4.assign(Scenario=4)
+        cdf = pd.concat([df_1p5, df_2, df_4])
+        cdf['Model'] = cdf.index
+        mdf = pd.melt(cdf, id_vars=['Scenario', 'Model'], var_name=['Var'])
+        mins = mdf.groupby(['Var', 'Scenario']).min()
+        maxs = mdf.groupby(['Var', 'Scenario']).max()
+        # Plot data in categories, with markers to indicate model and colours to indicate scenario
+        for i in range(45):
+            data = mdf.iloc[i].value
+            x_val = var_lookup[mdf.iloc[i].Var] + scen_lookup[mdf.iloc[i].Scenario]
+            if mdf.iloc[i].Model == 'MMM':
+                plt.scatter(x_val, data, marker=mkr_dict[mdf.iloc[i].Model], s=350, c=col_dict[mdf.iloc[i].Scenario], edgecolors = 'k', linewidths=3, zorder = 4)
+            else:
+                plt.scatter(x_val, data, marker = mkr_dict[mdf.iloc[i].Model], s =350, c = col_dict[mdf.iloc[i].Scenario], zorder = 4)
+        for i, x in enumerate([1,5,9]):
+            for n, col in enumerate([1.5, 2.0, 4.0]):
+                ax.vlines(x=x+n, ymin=mins.iloc[x+n-i-1].value, ymax=maxs.iloc[x+n-i-1].value, colors = col_dict[col], linestyle='--', linewidth=3, zorder = 1)
+        # Draw lines
+        MMMs = mdf.loc[mdf['Model'] == 'MMM']
+        ax.plot((1, 2, 3), (MMMs.iloc[0].value, MMMs.iloc[1].value, MMMs.iloc[2].value), color='dimgrey', linewidth=2, zorder=3)
+        ax.plot((5, 6, 7), (MMMs.iloc[3].value, MMMs.iloc[4].value, MMMs.iloc[5].value), color='dimgrey', linewidth=2, zorder=3)
+        ax.plot((9, 10, 11), (MMMs.iloc[6].value, MMMs.iloc[7].value, MMMs.iloc[8].value), color='dimgrey', linewidth=2, zorder=3)
+        # Create legends
+        mkrs = [Patch(facecolor=col_dict[1.5], edgecolor=None, label='1.5$^{\circ}$C'),
+                Patch(facecolor=col_dict[2.0], edgecolor=None, label='2.0$^{\circ}$C'),
+                Patch(facecolor=col_dict[4.0], edgecolor=None, label='4.0$^{\circ}$C')]
+        lgd1 = plt.legend(handles=mkrs, bbox_to_anchor=(1.0, 0.5), loc=2, fontsize=20, title='Scenario')
+        ax.add_artist(lgd1)
+        frame = lgd1.get_frame()
+        frame.set_facecolor('white')
+        for ln in lgd1.get_texts():
+            plt.setp(ln, color='dimgrey', fontsize=18)
+        frame.set_linewidth(2.0)
+        frame.set_edgecolor('dimgrey')
+        ln = lgd1.get_title()
+        plt.setp(ln, color='#222222', fontsize=20)
+        cols = [Line2D([0], [0], marker='x', color='w', label='ACCESS1.3', markeredgecolor='#222222',
+                       markerfacecolor='#222222', markersize=15),
+                Line2D([0], [0], marker='P', color='w', label='CESM2', markerfacecolor='#222222', markersize=15),
+                Line2D([0], [0], marker='^', color='w', label='CNRM-CM6-1', markerfacecolor='#222222', markersize=15),
+                Line2D([0], [0], marker='*', color='w', label='NorESM1-M', markerfacecolor='#222222', markersize=15),
+                Line2D([0], [0], marker='o', color='w', label='MMM', markeredgecolor='#222222', markerfacecolor='w',
+                       markersize=15)]
+        lgd2 = plt.legend(handles=cols, bbox_to_anchor=(1.0, 1.), loc=2, fontsize=20, title="Model")
+        ax.add_artist(lgd2)
+        frame = lgd2.get_frame()
+        frame.set_facecolor('white')
+        for ln in lgd2.get_texts():
+            plt.setp(ln, color='dimgrey', fontsize=18)
+        ln = lgd2.get_title()
+        plt.setp(ln, color='#222222', fontsize=20)
+        frame.set_linewidth(2.0)
+        frame.set_edgecolor('dimgrey')
+    elif abs_or_difs == 'difs':
+        cdf = pd.read_csv('D:\\Antarctic SMB\\Ice_shelf_difs_Gt_1p5_to_4_deg.csv', index_col = 0)
+        cdf = cdf.transpose()
+        cdf['Model'] = cdf.index
+        mdf = pd.melt(cdf, id_vars=[ 'Model'], var_name=['Var'])
+        plt.axhline(y = 0, linewidth = 2, color = 'dimgrey', linestyle = '--', zorder = 2)
+        for i in range(15):
+            data = mdf.iloc[i].value
+            x_val = var_lookup[mdf.iloc[i].Var]
+            if mdf.iloc[i].Model == 'MMM':
+                plt.scatter(x_val, data, marker=mkr_dict[mdf.iloc[i].Model], s=550, c=col_dict[mdf.iloc[i].Var], edgecolors = 'k', linewidths=3, zorder = 4)
+            else:
+                plt.scatter(x_val, data, marker = mkr_dict[mdf.iloc[i].Model], s =550, c = col_dict[mdf.iloc[i].Var], zorder = 4)
+        for n, col in enumerate(['ME', 'RU', 'SMB']):
+            ax.vlines(x=var_lookup[col], ymin=mdf.loc[mdf['Var'] == col].min().value, ymax=mdf.loc[mdf['Var'] == col].max().value, colors = col_dict[col], linestyle='--', linewidth=3, zorder = 1)
+        plt.subplots_adjust(left = 0.3, right = 0.98, )
+    plt.savefig(filepath + 'Model_scatter_scenarios_components_'+abs_or_difs+'.png')
+    plt.savefig('C:\\Users\\Ella\\OneDrive - University of Reading\\Antarctic SMB\\Model_scatter_scenarios_components_'+abs_or_difs+'.png')
+    plt.savefig('C:\\Users\\Ella\\OneDrive - University of Reading\\Antarctic SMB\\Model_scatter_scenarios_components_'+abs_or_difs+'.eps')
+    plt.show()
+
+scatter_scen('difs')
+
+
+def plot_isotherm():
+    fig, axs = plt.subplots(2,2, figsize = (12,10))
+    axs = axs.flatten()
+    CbAx = fig.add_axes([0.85,0.25, 0.03, 0.5])
+    for i, j in enumerate(dict_list.keys()):
+        # Find mean difference between slice where warming = +dT and start of the simulation (i.e. the difference at dT)
+        c = axs[i].pcolormesh(masks['shelf'] * (dict_list['CESM2']['TT'][:29].collapsed('time', iris.analysis.MEAN)-
+                                                dict_list['CESM2']['TT'][-30:].collapsed('time', iris.analysis.MEAN)).data, cmap = 'bwr', vmin = -15, vmax = 15)
+        axs[i].contour(masks['shelf'], levels=  [0], colors = 'k', linewidths = 0.8)
+        axs[i].contour(dict_list['CESM2']['TT'][:29].collapsed('time', iris.analysis.MEAN).data, levels = [-9.0], colors ='k' , linewidths = 3, linestyles = '--')
+        axs[i].contour(dict_list['CESM2']['TT'][30:].collapsed('time', iris.analysis.MEAN).data, levels=[-9.0], colors='white', linewidths=3, linestyles=':')
+        axs[i].set_title(j, fontsize=20, color='dimgrey', )
+        axs[i].axis('off')
+    cb = plt.colorbar(c, cax = CbAx, ticks = [0, 100, 365], extend = 'max')
+    cb.solids.set_edgecolor("face")
+    cb.outline.set_edgecolor('dimgrey')
+    cb.ax.tick_params(which='both', axis='both', labelsize=20, labelcolor='dimgrey', pad=10, size=0, tick1On=False, tick2On=False)
+    cb.outline.set_linewidth(2)
+    cb.ax.xaxis.set_ticks_position('bottom')
+    #cb.set_label(v, fontsize=20, rotation = 0, color='dimgrey', labelpad=30)
+    cb.ax.set_title('Annual mean near-surface\ntemperature ($^{\circ}$C)', fontname='Helvetica', color='dimgrey', fontsize=20, pad=20)
+    plt.subplots_adjust(right = 0.8)
+    plt.savefig(filepath + 'minus_9_deg_isotherm.png')
+    plt.show()
+
+#plot_isotherm()
 
 # Questions:
 # 1. what is current melt duration over ice shelves?
